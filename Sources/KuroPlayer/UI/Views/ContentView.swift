@@ -5,38 +5,38 @@ struct ContentView: View {
     @StateObject private var authManager = AuthManager.shared
     
     var body: some View {
-        HStack(spacing: 0) {
-            SidebarView(selectedView: $viewModel.selectedView)
+        NavigationSplitView {
+            SidebarView()
                 .environmentObject(viewModel)
-            
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+        } detail: {
             VStack(spacing: 0) {
+                // Main content area with background extension
                 ZStack {
                     switch viewModel.selectedView {
                     case .home:
                         HomeView()
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     case .search:
                         SearchView()
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     case .library:
                         LibraryView()
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    case .queue:
+                        QueueView()
                     case .settings:
                         SettingsView()
-                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: viewModel.selectedView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .backgroundExtension()
+                .backgroundExtensionEffect()
                 
+                // Player bar
                 PlayerBarView()
                     .environmentObject(viewModel)
             }
         }
+        .navigationSplitViewStyle(.balanced)
         .environmentObject(viewModel)
         .frame(minWidth: 1000, minHeight: 600)
-        .background(KurokulaTheme.background)
         .onAppear {
             Task {
                 await viewModel.loadLibrary()
@@ -44,37 +44,45 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) {
             if let errorMessage = viewModel.errorMessage {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(KurokulaTheme.accent)
-                    Text(errorMessage)
-                        .foregroundColor(KurokulaTheme.foreground)
-                    Spacer()
-                    Button(action: { viewModel.dismissError() }) {
-                        Image(systemName: "xmark")
-                            .foregroundColor(KurokulaTheme.gray)
+                ErrorBanner(message: errorMessage) {
+                    withAnimation {
+                        viewModel.dismissError()
                     }
-                    .buttonStyle(.plain)
                 }
-                .padding()
-                .background(KurokulaTheme.cardBackground)
-                .cornerRadius(8)
-                .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
                 .transition(.move(edge: .top).combined(with: .opacity))
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                        if viewModel.errorMessage == errorMessage {
-                            withAnimation {
-                                viewModel.dismissError()
-                            }
-                        }
-                    }
-                }
             }
         }
         .animation(.easeInOut, value: viewModel.errorMessage)
+    }
+}
+
+struct ErrorBanner: View {
+    let message: String
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            Text(message)
+                .foregroundColor(.primary)
+            Spacer()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding()
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
+        .padding(.horizontal, 20)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                onDismiss()
+            }
+        }
     }
 }
 
@@ -82,79 +90,83 @@ struct HomeView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack {
-                Text("Home")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // Quick actions
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Quick Start")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                // Hero section with background extension
+                ZStack(alignment: .bottomLeading) {
+                    LinearGradient(
+                        colors: [KurokulaTheme.accent.opacity(0.3), KurokulaTheme.background],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 200)
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Welcome back")
                             .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        HStack(spacing: 12) {
-                            QuickActionButton(icon: "magnifyingglass", title: "Search", color: KurokulaTheme.accent) {
+                            .foregroundColor(.secondary)
+                        Text("What do you want to play?")
+                            .font(.largeTitle.bold())
+                    }
+                    .padding(24)
+                }
+                .backgroundExtensionEffect()
+                
+                // Quick actions with glass
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Quick Start")
+                        .font(.title2.bold())
+                    
+                    GlassEffectContainer(spacing: 16) {
+                        HStack(spacing: 16) {
+                            QuickActionButton(icon: "magnifyingglass", title: "Search", tint: KurokulaTheme.accent) {
                                 viewModel.selectedView = .search
                             }
-                            QuickActionButton(icon: "music.note.list", title: "Library", color: KurokulaTheme.secondary) {
+                            QuickActionButton(icon: "music.note.list", title: "Library", tint: KurokulaTheme.secondary) {
                                 viewModel.selectedView = .library
                             }
-                            QuickActionButton(icon: "waveform", title: "Radio", color: KurokulaTheme.success) {
-                                // future feature
+                            QuickActionButton(icon: "list.bullet", title: "Queue", tint: KurokulaTheme.success) {
+                                viewModel.selectedView = .queue
                             }
                         }
                     }
-                    .padding(.horizontal)
-                    
-                    // Recently played
-                    if !viewModel.libraryTracks.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("From Your Library")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(KurokulaTheme.foreground)
-                            
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(viewModel.libraryTracks.prefix(10)) { track in
-                                        TrackCard(track: track)
-                                            .environmentObject(viewModel)
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                        }
-                    }
-                    
-                    // Connected services status
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Connected Services")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
+                }
+                .padding(.horizontal, 24)
+                
+                // Recently played
+                if !viewModel.libraryTracks.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("From Your Library")
+                            .font(.title2.bold())
                         
-                        HStack(spacing: 12) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(viewModel.libraryTracks.prefix(10)) { track in
+                                    TrackCard(track: track)
+                                }
+                            }
+                            .padding(.horizontal, 24)
+                        }
+                    }
+                }
+                
+                // Services status
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Connected Services")
+                        .font(.title2.bold())
+                    
+                    GlassEffectContainer(spacing: 12) {
+                        VStack(spacing: 12) {
                             ServiceStatusCard(
                                 name: "YouTube Music",
                                 icon: "play.rectangle",
                                 isConnected: AuthManager.shared.isAuthenticatedYouTubeMusic
                             )
-                            
                             ServiceStatusCard(
                                 name: "SoundCloud",
                                 icon: "cloud",
                                 isConnected: AuthManager.shared.isAuthenticatedSoundCloud
                             )
-                            
                             ServiceStatusCard(
                                 name: "Last.fm",
                                 icon: "waveform",
@@ -162,34 +174,35 @@ struct HomeView: View {
                             )
                         }
                     }
-                    .padding(.horizontal)
                 }
-                .padding(.bottom)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 100) // Space for player bar
             }
         }
-        .background(KurokulaTheme.background)
     }
 }
 
 struct QuickActionButton: View {
     let icon: String
     let title: String
-    let color: Color
+    let tint: Color
     let action: () -> Void
     
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title2)
+                    .font(.system(size: 32))
+                    .foregroundStyle(tint)
                 Text(title)
-                    .font(.caption)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
             }
-            .foregroundColor(color)
-            .frame(width: 100, height: 80)
-            .glassSurface(cornerRadius: 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 120)
+            .glassEffect(.regular.tint(tint).interactive(), in: .rect(cornerRadius: 16))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
     }
 }
 
@@ -209,37 +222,37 @@ struct TrackCard: View {
                             .aspectRatio(contentMode: .fill)
                     } placeholder: {
                         ZStack {
-                            Rectangle()
-                                .fill(KurokulaTheme.gray.opacity(0.3))
+                            Color.gray.opacity(0.2)
                             Image(systemName: "music.note")
-                                .foregroundColor(KurokulaTheme.gray)
+                                .font(.system(size: 40))
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .frame(width: 140, height: 140)
-                    .cornerRadius(4)
-
+                    .frame(width: 160, height: 160)
+                    .clipShape(.rect(cornerRadius: 12))
+                    
                     if viewModel.currentTrack?.id == track.id {
                         NowPlayingIndicator(isPlaying: viewModel.isPlaying)
-                            .frame(width: 140, height: 140)
-                            .background(Color.black.opacity(0.5))
-                            .cornerRadius(4)
+                            .frame(width: 160, height: 160)
+                            .background(.black.opacity(0.5))
+                            .clipShape(.rect(cornerRadius: 12))
                     }
                 }
-            
-            Text(track.title)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(KurokulaTheme.foreground)
-                .lineLimit(1)
-            
-                Text(track.artist)
-                    .font(.caption2)
-                    .foregroundColor(KurokulaTheme.gray)
-                    .lineLimit(1)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(track.artist)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             }
-            .frame(width: 140)
+            .frame(width: 160)
         }
         .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
     }
 }
 
@@ -249,27 +262,27 @@ struct ServiceStatusCard: View {
     let isConnected: Bool
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundColor(isConnected ? KurokulaTheme.success : KurokulaTheme.gray)
+                .foregroundStyle(isConnected ? KurokulaTheme.success : .secondary)
+                .frame(width: 32)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(KurokulaTheme.foreground)
-                
+                    .font(.headline)
                 Text(isConnected ? "Connected" : "Not connected")
                     .font(.caption)
-                    .foregroundColor(isConnected ? KurokulaTheme.success : KurokulaTheme.gray)
+                    .foregroundColor(isConnected ? KurokulaTheme.success : .secondary)
             }
             
             Spacer()
+            
+            Circle()
+                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
+                .frame(width: 8, height: 8)
         }
         .padding()
-        .frame(maxWidth: .infinity)
-        .background(KurokulaTheme.cardBackground)
-        .cornerRadius(8)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
     }
 }

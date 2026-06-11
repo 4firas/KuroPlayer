@@ -1,6 +1,6 @@
 import Foundation
 
-class ProviderRegistry {
+@MainActor class ProviderRegistry {
     static let shared = ProviderRegistry()
     
     private var providers: [MusicProviderType: MusicProvider] = [:]
@@ -26,19 +26,20 @@ class ProviderRegistry {
     func searchAllProviders(query: String) async -> [Track] {
         var allTracks: [Track] = []
         
-        await withTaskGroup(of: [Track].self) { group in
+        await withTaskGroup(of: (MusicProviderType, [Track]).self) { group in
             for provider in authenticatedProviders() {
+                let providerType = provider.type
                 group.addTask {
                     do {
-                        return try await provider.search(query: query)
+                        return (providerType, try await provider.search(query: query))
                     } catch {
-                        print("Search error for \(provider.type): \(error)")
-                        return []
+                        print("Search error for \(providerType): \(error)")
+                        return (providerType, [])
                     }
                 }
             }
             
-            for await tracks in group {
+            for await (_, tracks) in group {
                 allTracks.append(contentsOf: tracks)
             }
         }

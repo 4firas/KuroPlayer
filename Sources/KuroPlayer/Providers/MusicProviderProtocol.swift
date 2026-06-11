@@ -1,6 +1,6 @@
 import Foundation
 
-protocol MusicProvider {
+@MainActor protocol MusicProvider: Sendable {
     var type: MusicProviderType { get }
     var isAuthenticated: Bool { get }
     

@@ -1,6 +1,6 @@
 import Foundation
 
-class YouTubeMusicAuth {
+@MainActor class YouTubeMusicAuth {
     static let shared = YouTubeMusicAuth()
     
     private var clientID: String {

@@ -1,7 +1,7 @@
 import Foundation
 import AVFoundation
 
-class LocalFileProvider: MusicProvider {
+@MainActor class LocalFileProvider: MusicProvider {
     var type: MusicProviderType { .local }
     var isAuthenticated: Bool { true }
 
@@ -35,19 +35,35 @@ class LocalFileProvider: MusicProvider {
         return url
     }
 
+    private nonisolated func collectAudioFiles(from directory: URL) -> [URL] {
+        var urls: [URL] = []
+        if let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            while let fileURL = enumerator.nextObject() as? URL {
+                if supportedExtensions.contains(fileURL.pathExtension.lowercased()) {
+                    urls.append(fileURL)
+                }
+            }
+        }
+        return urls
+    }
+    
     func getLibrary() async throws -> [Track] {
         guard let musicDir = fileManager.urls(for: .musicDirectory, in: .userDomainMask).first else {
             return []
         }
 
+        // Collect URLs synchronously first
+        let fileURLs = collectAudioFiles(from: musicDir)
+
+        // Then parse them asynchronously
         var tracks: [Track] = []
-        if let enumerator = fileManager.enumerator(at: musicDir, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
-            for case let fileURL as URL in enumerator {
-                if supportedExtensions.contains(fileURL.pathExtension.lowercased()) {
-                    if let track = try? await parseTrack(at: fileURL) {
-                        tracks.append(track)
-                    }
-                }
+        for url in fileURLs {
+            if let track = try? await parseTrack(at: url) {
+                tracks.append(track)
             }
         }
 

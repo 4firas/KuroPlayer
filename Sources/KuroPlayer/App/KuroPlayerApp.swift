@@ -40,7 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover = NSPopover()
         popover.contentSize = NSSize(width: 250, height: 150)
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: MiniPlayerView(viewModel: viewModel))
+        popover.contentViewController = NSHostingController(rootView: MiniPlayerView().environmentObject(viewModel))
     }
 
     @objc func togglePopover() {

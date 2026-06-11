@@ -1,6 +1,6 @@
 import Foundation
 
-class SoundCloudAuth {
+@MainActor class SoundCloudAuth {
     static let shared = SoundCloudAuth()
     
     private var clientID: String {

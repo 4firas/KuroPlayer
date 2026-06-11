@@ -1,6 +1,6 @@
 import Foundation
 
-class Cache {
+@MainActor class Cache {
     static let shared = Cache()
 
     private let cacheDir: URL

@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-class LastFmScrobbler {
+@MainActor class LastFmScrobbler {
     static let shared = LastFmScrobbler()
     
     private var apiKey: String {

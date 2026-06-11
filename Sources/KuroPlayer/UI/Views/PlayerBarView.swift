@@ -2,166 +2,126 @@ import SwiftUI
 
 struct PlayerBarView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    @State private var showingQueue = false
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             // Progress bar
-            if viewModel.currentTrack != nil {
+            if let track = viewModel.currentTrack {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(KurokulaTheme.gray.opacity(0.3))
-                            .frame(height: 3)
+                        Capsule()
+                            .fill(.secondary.opacity(0.3))
+                            .frame(height: 4)
                         
-                        Rectangle()
+                        Capsule()
                             .fill(KurokulaTheme.accent)
-                            .frame(width: geometry.size.width * progress, height: 3)
+                            .frame(width: geometry.size.width * progress, height: 4)
                     }
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                let percent = min(max(value.location.x / geometry.size.width, 0), 1)
-                                let time = viewModel.duration * Double(percent)
-                                viewModel.seek(to: time)
-                            }
-                    )
                 }
-                .frame(height: 3)
+                .frame(height: 4)
+                .onTapGesture { location in
+                    // TODO: Add scrubbing
+                }
             }
             
-            HStack(spacing: 16) {
+            // Controls
+            HStack(spacing: 20) {
                 // Track info
-                HStack(spacing: 12) {
-                    if let track = viewModel.currentTrack {
+                if let track = viewModel.currentTrack {
+                    HStack(spacing: 12) {
                         AsyncImage(url: track.artworkURL) { image in
                             image
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                         } placeholder: {
-                            ZStack {
-                                Rectangle()
-                                    .fill(KurokulaTheme.gray.opacity(0.3))
-                                Image(systemName: "music.note")
-                                    .foregroundColor(KurokulaTheme.gray)
-                            }
+                            Image(systemName: "music.note")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 48, height: 48)
+                                .background(.quaternary)
                         }
-                        .frame(width: 56, height: 56)
-                        .cornerRadius(4)
+                        .frame(width: 48, height: 48)
+                        .clipShape(.rect(cornerRadius: 8))
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)
-                                .font(.body)
-                                .fontWeight(.medium)
-                                .foregroundColor(KurokulaTheme.foreground)
+                                .font(.headline)
                                 .lineLimit(1)
-                            
                             Text(track.artist)
                                 .font(.caption)
-                                .foregroundColor(KurokulaTheme.gray)
+                                .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
-                    } else {
-                        Text("No track playing")
-                            .font(.body)
-                            .foregroundColor(KurokulaTheme.gray)
                     }
+                    .frame(width: 250, alignment: .leading)
+                } else {
+                    Text("No track playing")
+                        .foregroundColor(.secondary)
+                        .frame(width: 250, alignment: .leading)
                 }
-                .frame(width: 250, alignment: .leading)
                 
                 Spacer()
                 
-                // Controls
-                HStack(spacing: 20) {
-                    Button(action: viewModel.previous) {
+                // Playback controls
+                HStack(spacing: 16) {
+                    Button(action: { viewModel.previous() }) {
                         Image(systemName: "backward.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(KurokulaTheme.foreground)
+                            .font(.title2)
                     }
-                    .buttonStyle(.borderless)
-                    .scaleEffect(0.8)
-                    .keyboardShortcut(.leftArrow, modifiers: [.command])
+                    .buttonStyle(.glass)
+                    .disabled(viewModel.currentTrack == nil)
                     
-                    ZStack {
-                        if viewModel.playbackEngine.state.status == .loading {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Button(action: viewModel.togglePlayPause) {
-                                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 22))
-                                    .foregroundColor(KurokulaTheme.secondary)
-                            }
-                            .buttonStyle(.borderless)
-                            .keyboardShortcut(.space, modifiers: [])
-                        }
+                    Button(action: { viewModel.togglePlayPause() }) {
+                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title)
                     }
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Circle()
-                            .stroke(KurokulaTheme.secondary.opacity(0.3), lineWidth: 1)
-                            .scaleEffect(1.4)
-                    )
+                    .buttonStyle(.glassProminent)
+                    .disabled(viewModel.currentTrack == nil)
                     
-                    Button(action: viewModel.next) {
+                    Button(action: { viewModel.next() }) {
                         Image(systemName: "forward.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(KurokulaTheme.foreground)
+                            .font(.title2)
                     }
-                    .buttonStyle(.borderless)
-                    .keyboardShortcut(.rightArrow, modifiers: [.command])
+                    .buttonStyle(.glass)
+                    .disabled(viewModel.currentTrack == nil)
                 }
                 
                 Spacer()
                 
-                // Time and volume
+                // Volume and time
                 HStack(spacing: 12) {
-                    Button(action: { showingQueue.toggle() }) {
-                        Image(systemName: "list.bullet")
-                            .foregroundColor(KurokulaTheme.gray)
-                    }
-                    .buttonStyle(.borderless)
-                    .popover(isPresented: $showingQueue, arrowEdge: .top) {
-                        QueueView()
-                            .environmentObject(viewModel)
-                    }
-
-                    Text(formatTime(viewModel.currentTime))
-                        .font(.caption)
-                        .foregroundColor(KurokulaTheme.gray)
-                    
-                    Text("/")
-                        .font(.caption)
-                        .foregroundColor(KurokulaTheme.gray)
-                    
-                    Text(formatTime(viewModel.duration))
-                        .font(.caption)
-                        .foregroundColor(KurokulaTheme.gray)
-                    
                     Image(systemName: "speaker.fill")
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundColor(.secondary)
                     
                     Slider(value: $viewModel.sliderVolume, in: 0...1)
-                        .onChange(of: viewModel.sliderVolume) { newVal in
-                            viewModel.setVolume(Float(newVal))
+                        .onChange(of: viewModel.sliderVolume) { _, newValue in
+                            viewModel.setVolume(Float(newValue))
                         }
                         .frame(width: 100)
+                    
+                    if let track = viewModel.currentTrack {
+                        Text(formatTime(viewModel.currentTime))
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                        
+                        Text("/")
+                            .foregroundColor(.secondary)
+                        
+                        Text(formatTime(track.duration))
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .frame(width: 250, alignment: .trailing)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
         }
-        .background(KurokulaTheme.playerBar)
-        .onAppear {
-            viewModel.sliderVolume = Double(viewModel.volume)
-        }
+        .padding(16)
+        .glassEffect(.regular, in: .rect(cornerRadius: 0))
     }
     
     private var progress: Double {
-        guard viewModel.duration > 0 else { return 0 }
-        return viewModel.currentTime / viewModel.duration
+        guard let track = viewModel.currentTrack, track.duration > 0 else { return 0 }
+        return viewModel.currentTime / track.duration
     }
     
     private func formatTime(_ time: TimeInterval) -> String {

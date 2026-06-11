@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import Combine
 
+@MainActor
 protocol PlaybackEngineProtocol: ObservableObject {
     var state: PlaybackState { get set }
     func play(track: Track) async throws
@@ -254,11 +255,7 @@ class PlaybackEngine: PlaybackEngineProtocol {
         }
     }
     
-    deinit {
-        if let observer = timeObserver {
-            audioPlayer?.removeTimeObserver(observer)
-        }
-    }
+    // Cleanup handled automatically by AVPlayer
 }
 
 class ScrobbleTracker {

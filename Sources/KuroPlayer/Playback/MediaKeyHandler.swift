@@ -1,7 +1,7 @@
 import Foundation
 import MediaPlayer
 
-class MediaKeyHandler {
+@MainActor class MediaKeyHandler {
     static let shared = MediaKeyHandler()
 
     private init() {}

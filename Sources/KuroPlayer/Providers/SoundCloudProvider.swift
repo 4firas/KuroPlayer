@@ -1,19 +1,13 @@
 import Foundation
 
-class SoundCloudProvider: MusicProvider {
+@MainActor class SoundCloudProvider: MusicProvider {
     var type: MusicProviderType { .soundcloud }
-    // We scrape with yt-dlp, so no auth required
     var isAuthenticated: Bool { true }
     
     private let ytdlpPath = "/opt/homebrew/bin/yt-dlp"
     
-    func authenticate() async throws {
-        // No-op for scraping provider
-    }
-    
-    func logout() async throws {
-        // No-op for scraping provider
-    }
+    func authenticate() async throws {}
+    func logout() async throws {}
     
     func search(query: String) async throws -> [Track] {
         let cacheKey = "scsearch_\(query)"
@@ -35,7 +29,6 @@ class SoundCloudProvider: MusicProvider {
         
         let output = try await runYtDlp(args: args)
         let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        
         let tracks = lines.compactMap { parseSearchResult($0) }
         Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
         return tracks
@@ -49,58 +42,54 @@ class SoundCloudProvider: MusicProvider {
               let track = parseSearchResult(firstLine) else {
             throw ProviderError.trackNotFound
         }
-        
         return track
     }
     
     func getStreamURL(for track: Track) async throws -> URL {
-        let args = [
-            "-f", "bestaudio/best",
-            "--get-url",
-            track.providerTrackId
-        ]
-        
+        let args = ["-f", "bestaudio/best", "--get-url", track.providerTrackId]
         let output = try await runYtDlp(args: args)
         let urlString = output.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard let url = URL(string: urlString) else {
             throw ProviderError.streamUnavailable
         }
-        
         return url
     }
     
-    func getLibrary() async throws -> [Track] {
-        return []
+    func getLibrary() async throws -> [Track] { [] }
+    func getPlaylists() async throws -> [Playlist] { [] }
+    func createPlaylist(name: String) async throws -> Playlist { throw ProviderError.networkError("Not supported") }
+    func addTrackToPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
+    func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
+    func deletePlaylist(playlist: Playlist) async throws { throw ProviderError.networkError("Not supported") }
+
+    // MARK: - Thread-safe data buffer
+    
+    private final class DataBuffer: @unchecked Sendable {
+        private var data = Data()
+        private let lock = NSLock()
+        
+        func append(_ newData: Data) {
+            lock.lock()
+            data.append(newData)
+            lock.unlock()
+        }
+        
+        func getData() -> Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return data
+        }
     }
     
-    func getPlaylists() async throws -> [Playlist] {
-        return []
-    }
-
-    func createPlaylist(name: String) async throws -> Playlist {
-        throw ProviderError.networkError("Playlists not supported by anonymous SoundCloud provider")
-    }
-
-    func addTrackToPlaylist(playlist: Playlist, track: Track) async throws {
-        throw ProviderError.networkError("Playlists not supported by anonymous SoundCloud provider")
-    }
-
-    func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws {
-        throw ProviderError.networkError("Playlists not supported by anonymous SoundCloud provider")
-    }
-
-    func deletePlaylist(playlist: Playlist) async throws {
-        throw ProviderError.networkError("Playlists not supported by anonymous SoundCloud provider")
-    }
-
     // MARK: - YT-DLP execution
 
     private func runYtDlp(args: [String]) async throws -> String {
+        let ytdlp = self.ytdlpPath
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            Task.detached {
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: self.ytdlpPath)
+                process.executableURL = URL(fileURLWithPath: ytdlp)
                 process.arguments = args
 
                 let stdoutPipe = Pipe()
@@ -108,19 +97,20 @@ class SoundCloudProvider: MusicProvider {
                 process.standardOutput = stdoutPipe
                 process.standardError = stderrPipe
 
-                var outputData = Data()
+                let outputBuffer = DataBuffer()
+                let errorBuffer = DataBuffer()
+
                 stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     if !data.isEmpty {
-                        outputData.append(data)
+                        outputBuffer.append(data)
                     }
                 }
 
-                var errorData = Data()
                 stderrPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     if !data.isEmpty {
-                        errorData.append(data)
+                        errorBuffer.append(data)
                     }
                 }
 
@@ -129,10 +119,10 @@ class SoundCloudProvider: MusicProvider {
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
 
                     if proc.terminationStatus == 0 {
-                        let output = String(data: outputData, encoding: .utf8) ?? ""
+                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
                         continuation.resume(returning: output)
                     } else {
-                        let err = String(data: errorData, encoding: .utf8) ?? "unknown error"
+                        let err = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
                         continuation.resume(throwing: ProviderError.networkError("yt-dlp failed: \(err.prefix(200))"))
                     }
                 }
@@ -175,7 +165,7 @@ class SoundCloudProvider: MusicProvider {
             artworkURL: artworkURL,
             streamURL: nil,
             providerType: .soundcloud,
-            providerTrackId: urlString // we use the full url for yt-dlp for soundcloud
+            providerTrackId: urlString
         )
     }
 }

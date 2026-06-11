@@ -1,6 +1,6 @@
 import Foundation
 
-class YouTubeMusicProvider: MusicProvider {
+@MainActor class YouTubeMusicProvider: MusicProvider {
     var type: MusicProviderType { .youtubeMusic }
     var isAuthenticated: Bool { YouTubeMusicAuth.shared.isSignedIn }
     
@@ -107,10 +107,11 @@ class YouTubeMusicProvider: MusicProvider {
     // MARK: - YT-DLP execution
     
     private func runYtDlp(args: [String]) async throws -> String {
+        let ytdlp = self.ytdlpPath
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            Task.detached {
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: self.ytdlpPath)
+                process.executableURL = URL(fileURLWithPath: ytdlp)
                 process.arguments = args
                 
                 let stdoutPipe = Pipe()
@@ -118,33 +119,32 @@ class YouTubeMusicProvider: MusicProvider {
                 process.standardOutput = stdoutPipe
                 process.standardError = stderrPipe
                 
-                // Read stdout asynchronously to avoid pipe buffer deadlock
-                var outputData = Data()
+                let outputBuffer = DataBuffer()
+                let errorBuffer = DataBuffer()
+                
                 stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     if !data.isEmpty {
-                        outputData.append(data)
+                        outputBuffer.append(data)
                     }
                 }
                 
-                var errorData = Data()
                 stderrPipe.fileHandleForReading.readabilityHandler = { handle in
                     let data = handle.availableData
                     if !data.isEmpty {
-                        errorData.append(data)
+                        errorBuffer.append(data)
                     }
                 }
                 
                 process.terminationHandler = { proc in
-                    // Clean up handlers to avoid leaks
                     stdoutPipe.fileHandleForReading.readabilityHandler = nil
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
                     
                     if proc.terminationStatus == 0 {
-                        let output = String(data: outputData, encoding: .utf8) ?? ""
+                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
                         continuation.resume(returning: output)
                     } else {
-                        let err = String(data: errorData, encoding: .utf8) ?? "unknown error"
+                        let err = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
                         continuation.resume(throwing: ProviderError.networkError("yt-dlp failed: \(err.prefix(200))"))
                     }
                 }
@@ -155,6 +155,23 @@ class YouTubeMusicProvider: MusicProvider {
                     continuation.resume(throwing: ProviderError.networkError("Failed to run yt-dlp: \(error.localizedDescription)"))
                 }
             }
+        }
+    }
+    
+    private final class DataBuffer: @unchecked Sendable {
+        private var data = Data()
+        private let lock = NSLock()
+        
+        func append(_ newData: Data) {
+            lock.lock()
+            data.append(newData)
+            lock.unlock()
+        }
+        
+        func getData() -> Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return data
         }
     }
     

@@ -1,160 +1,85 @@
 import SwiftUI
 
+enum MainView: String, CaseIterable, Identifiable, Hashable {
+    case home, search, library, queue, settings
+    var id: String { rawValue }
+}
+
 struct SidebarView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    @Binding var selectedView: MainView
+    @StateObject private var authManager = AuthManager.shared
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Logo/Title
-            HStack {
-                Image(systemName: "music.note")
-                    .font(.title2)
-                    .foregroundColor(KurokulaTheme.secondary)
-                Text("KuroPlayer")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-            }
-            .padding()
-            
-            Divider()
-                .background(KurokulaTheme.gray)
-            
-            // Navigation
-            VStack(alignment: .leading, spacing: 4) {
-                SidebarItem(icon: "house.fill", title: "Home", isSelected: selectedView == .home) {
-                    selectedView = .home
-                }
+        List(selection: $viewModel.selectedView) {
+            Section {
+                Label("Home", systemImage: "house.fill")
+                    .tag(MainView.home)
                 
-                SidebarItem(icon: "magnifyingglass", title: "Search", isSelected: selectedView == .search) {
-                    selectedView = .search
-                }
+                Label("Search", systemImage: "magnifyingglass")
+                    .tag(MainView.search)
                 
-                SidebarItem(icon: "music.note.list", title: "Library", isSelected: selectedView == .library) {
-                    selectedView = .library
-                }
-            }
-            .padding(.top, 8)
-            
-            Divider()
-                .background(KurokulaTheme.gray)
-                .padding(.top, 8)
-            
-            // Playlists
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Playlists")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(KurokulaTheme.gray)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                Label("Library", systemImage: "music.note.list")
+                    .tag(MainView.library)
                 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(viewModel.playlists) { playlist in
-                            Button(action: {}) {
-                                Text(playlist.name)
-                                    .font(.body)
-                                    .foregroundColor(KurokulaTheme.foreground)
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 6)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
+                Label("Queue", systemImage: "list.bullet")
+                    .tag(MainView.queue)
+            }
+            
+            Section("Playlists") {
+                ForEach(viewModel.playlists) { playlist in
+                    Label(playlist.name, systemImage: "music.note")
+                        .tag(MainView.home) // TODO: Navigate to playlist view
                 }
             }
             
-            Spacer()
-            
-            // Connected Services
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Connected")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(KurokulaTheme.gray)
-                    .padding(.horizontal)
+            Section("Connected") {
+                ServiceIndicator(
+                    name: "YouTube Music",
+                    icon: "play.rectangle",
+                    isConnected: authManager.isAuthenticatedYouTubeMusic
+                )
                 
-                ForEach(MusicProviderType.allCases) { provider in
-                    HStack {
-                        Image(systemName: provider.iconName)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        Text(provider.displayName)
-                            .font(.caption)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        Spacer()
-                        Circle()
-                            .fill(isConnected(provider) ? KurokulaTheme.success : KurokulaTheme.gray)
-                            .frame(width: 6, height: 6)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 2)
-                }
+                ServiceIndicator(
+                    name: "SoundCloud",
+                    icon: "cloud",
+                    isConnected: authManager.isAuthenticatedSoundCloud
+                )
+                
+                ServiceIndicator(
+                    name: "Last.fm",
+                    icon: "waveform",
+                    isConnected: authManager.isAuthenticatedLastFm
+                )
             }
-            .padding(.bottom, 8)
             
-            Button(action: { selectedView = .settings }) {
-                HStack {
-                    Image(systemName: "gear")
-                    Text("Settings")
+            Section {
+                Button {
+                    viewModel.selectedView = .settings
+                } label: {
+                    Label("Settings", systemImage: "gear")
                 }
-                .font(.body)
-                .foregroundColor(KurokulaTheme.foreground)
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.borderless)
         }
-        .frame(width: 220)
-        .background(KurokulaTheme.sidebar)
-    }
-    
-    private func isConnected(_ provider: MusicProviderType) -> Bool {
-        switch provider {
-        case .youtubeMusic:
-            return AuthManager.shared.isAuthenticatedYouTubeMusic
-        case .soundcloud:
-            return AuthManager.shared.isAuthenticatedSoundCloud
-        case .local:
-            return true
-        }
+        .listStyle(.sidebar)
+        .navigationTitle("KuroPlayer")
     }
 }
 
-struct SidebarItem: View {
+struct ServiceIndicator: View {
+    let name: String
     let icon: String
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
+    let isConnected: Bool
     
     var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .frame(width: 20)
-                Text(title)
-                    .font(.body)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? KurokulaTheme.hoverBackground : Color.clear)
-            )
-            .foregroundColor(isSelected ? KurokulaTheme.secondary : KurokulaTheme.foreground)
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+        HStack {
+            Image(systemName: icon)
+            Text(name)
+            Spacer()
+            Circle()
+                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
+                .frame(width: 8, height: 8)
         }
-        .buttonStyle(.borderless)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .foregroundColor(isConnected ? .primary : .secondary)
     }
-}
-
-enum MainView {
-    case home
-    case search
-    case library
-    case settings
 }

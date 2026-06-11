@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-class LastFmAuth {
+@MainActor class LastFmAuth {
     static let shared = LastFmAuth()
     
     private var apiKey: String {

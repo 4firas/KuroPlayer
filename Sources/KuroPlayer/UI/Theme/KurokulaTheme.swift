@@ -1,19 +1,20 @@
 import SwiftUI
 
+// MARK: - Kurokula Theme
+// Core accent colors for the app. System handles backgrounds/chrome via Liquid Glass.
+
 struct KurokulaTheme {
-    static let background = Color(hex: "#131515")
-    static let foreground = Color(hex: "#dfcfc2")
-    static let accent = Color(hex: "#791c1c")
-    static let secondary = Color(hex: "#fff600")
-    static let success = Color(hex: "#aeffa4")
-    static let error = Color(hex: "#c35951")
+    // Primary accent colors
+    static let accent = Color(hex: "#791c1c")        // Deep crimson
+    static let secondary = Color(hex: "#fff600")     // Neon yellow
+    static let success = Color(hex: "#aeffa4")       // Neon green
+    static let error = Color(hex: "#c35951")         // Soft red
+    
+    // Utility colors
     static let gray = Color(hex: "#505151")
     static let white = Color(hex: "#feffff")
-    
-    static let sidebar = Color(hex: "#1a1c1c")
-    static let playerBar = Color(hex: "#1e2020")
-    static let cardBackground = Color(hex: "#1e2020")
-    static let hoverBackground = Color(hex: "#252828")
+    static let background = Color(hex: "#131515")    // Dark charcoal
+    static let foreground = Color(hex: "#dfcfc2")    // Warm beige
 }
 
 extension Color {

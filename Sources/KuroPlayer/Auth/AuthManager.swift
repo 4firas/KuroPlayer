@@ -52,6 +52,7 @@ class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationCo
         switch provider {
         case .youtubeMusic: isAuthenticatedYouTubeMusic = value
         case .soundcloud: isAuthenticatedSoundCloud = value
+        case .local: break // Local files don't need auth
         }
     }
 

@@ -59,6 +59,9 @@ fi
 # Kill previous instance
 pkill -f "KuroPlayer.app" 2>/dev/null || true
 
+# Clean extended attributes
+xattr -cr "$APP_DIR" 2>/dev/null || true
+
 # Sign
 echo "🔑 Signing..."
 codesign --force --deep --sign - "$APP_DIR"

@@ -2,93 +2,83 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    @FocusState private var isSearchFocused: Bool
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Search")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-            
+        VStack(alignment: .leading, spacing: 0) {
+            // Search field
             HStack {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(KurokulaTheme.gray)
+                    .foregroundStyle(.secondary)
                 
                 TextField("Search tracks...", text: $viewModel.searchText)
                     .textFieldStyle(.plain)
-                    .focused($isSearchFocused)
-                    .foregroundColor(KurokulaTheme.foreground)
-                    .onChange(of: viewModel.searchText) { newValue in
+                    .onChange(of: viewModel.searchText) { _, newValue in
                         Task { await viewModel.search(query: newValue) }
                     }
                 
                 if !viewModel.searchText.isEmpty {
                     Button(action: { viewModel.searchText = "" }) {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(KurokulaTheme.gray)
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
             }
             .padding(12)
-            .background(KurokulaTheme.cardBackground)
-            .cornerRadius(8)
-            .padding(.horizontal)
+            .glassEffect(.regular, in: .rect(cornerRadius: 12))
+            .padding(24)
             
+            // Results
             if viewModel.isSearching {
                 VStack {
                     ProgressView()
                     Text("Searching...")
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.searchText.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 60))
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.secondary)
                     
                     Text("Search across all your connected services")
                         .font(.title3)
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.searchResults.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "music.note.slash")
                         .font(.system(size: 60))
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.secondary)
                     
                     Text("No results found")
                         .font(.title3)
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(viewModel.searchResults) { track in
-                            Button(action: {
-                                viewModel.play(track: track)
-                            }) {
-                                TrackRowContent(track: track)
+                    GlassEffectContainer(spacing: 2) {
+                        LazyVStack(spacing: 2) {
+                            ForEach(viewModel.searchResults) { track in
+                                Button(action: {
+                                    viewModel.play(track: track)
+                                }) {
+                                    TrackRowContent(track: track)
+                                }
+                                .buttonStyle(.plain)
+                                .glassEffect(
+                                    .regular.interactive(),
+                                    in: .rect(cornerRadius: 8)
+                                )
                             }
-                            .buttonStyle(TrackRowButtonStyle(isActive: viewModel.currentTrack?.id == track.id))
                         }
+                        .padding(.horizontal, 24)
                     }
-                    .padding(.horizontal)
                 }
             }
-        }
-        .background(KurokulaTheme.background)
-        .keyboardShortcut("f", modifiers: .command)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            isSearchFocused = true
         }
     }
 }
