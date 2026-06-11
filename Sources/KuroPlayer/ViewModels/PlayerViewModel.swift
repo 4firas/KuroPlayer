@@ -19,10 +19,11 @@ class PlayerViewModel: ObservableObject {
     @Published var selectedView: MainView = .home
     @Published var sliderVolume: Double = 0.7
     
-    private let playbackEngine = PlaybackEngine.shared
+    let playbackEngine: PlaybackEngine
     private var cancellables = Set<AnyCancellable>()
     
-    init() {
+    init(playbackEngine: PlaybackEngine) {
+        self.playbackEngine = playbackEngine
         setupBindings()
     }
     
@@ -106,6 +107,10 @@ class PlayerViewModel: ObservableObject {
         playbackEngine.addToQueue(track)
     }
     
+    func moveQueue(from source: IndexSet, to destination: Int) {
+        playbackEngine.moveQueue(from: source, to: destination)
+    }
+
     func search(query: String) async {
         guard !query.isEmpty else {
             searchResults = []

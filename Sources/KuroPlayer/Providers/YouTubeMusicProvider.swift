@@ -15,6 +15,11 @@ class YouTubeMusicProvider: MusicProvider {
     }
     
     func search(query: String) async throws -> [Track] {
+        let cacheKey = "ytsearch_\(query)"
+        if let cached = Cache.shared.getObject(forKey: cacheKey, type: [Track].self) {
+            return cached
+        }
+
         guard FileManager.default.fileExists(atPath: ytdlpPath) else {
             throw ProviderError.networkError("yt-dlp not found at \(ytdlpPath)")
         }
@@ -31,7 +36,9 @@ class YouTubeMusicProvider: MusicProvider {
         let output = try await runYtDlp(args: args)
         let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
         
-        return lines.compactMap { parseSearchResult($0) }
+        let tracks = lines.compactMap { parseSearchResult($0) }
+        Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
+        return tracks
     }
     
     func getTrack(id: String) async throws -> Track {
@@ -81,6 +88,22 @@ class YouTubeMusicProvider: MusicProvider {
         return []
     }
     
+    func createPlaylist(name: String) async throws -> Playlist {
+        throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+    }
+
+    func addTrackToPlaylist(playlist: Playlist, track: Track) async throws {
+        throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+    }
+
+    func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws {
+        throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+    }
+
+    func deletePlaylist(playlist: Playlist) async throws {
+        throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+    }
+
     // MARK: - YT-DLP execution
     
     private func runYtDlp(args: [String]) async throws -> String {

@@ -2,17 +2,41 @@ import Foundation
 import AVFoundation
 import Combine
 
-class PlaybackEngine: ObservableObject {
-    @Published var state = PlaybackState()
+protocol PlaybackEngineProtocol: ObservableObject {
+    var state: PlaybackState { get set }
+    func play(track: Track) async throws
+    func playQueue(at index: Int) async throws
+    func pause()
+    func resume()
+    func togglePlayPause() async throws
+    func next() async throws
+    func previous() async throws
+    func seek(to time: TimeInterval)
+    func setVolume(_ volume: Float)
+    func toggleShuffle()
+    func cycleRepeatMode()
+    func setQueue(_ tracks: [Track])
+    func addToQueue(_ track: Track)
+}
+
+class PlaybackEngine: PlaybackEngineProtocol {
+    @Published var state = PlaybackState() {
+        didSet {
+            debouncedSave()
+        }
+    }
     
     private var audioPlayer: AVPlayer?
     private var timeObserver: Any?
     private var scrobbleTracker = ScrobbleTracker()
+    private var saveTask: Task<Void, Never>?
     
-    static let shared = PlaybackEngine()
+    // Shared instance removed to fix singleton architecture
+    // Injected via environment object instead
     
-    private init() {
+    init() {
         setupAudioSession()
+        restoreState()
     }
     
     private func setupAudioSession() {
@@ -21,31 +45,83 @@ class PlaybackEngine: ObservableObject {
         #endif
     }
     
-    func play(track: Track) async throws {
+    private func getPersistenceURL() -> URL {
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appDir = appSupport.appendingPathComponent("KuroPlayer")
+
+        if !fileManager.fileExists(atPath: appDir.path) {
+            try? fileManager.createDirectory(at: appDir, withIntermediateDirectories: true)
+        }
+
+        return appDir.appendingPathComponent("playback_state.json")
+    }
+
+    private func debouncedSave() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds debounce
+            guard !Task.isCancelled else { return }
+            self.saveState()
+        }
+    }
+
+    private func saveState() {
+        do {
+            let data = try JSONEncoder().encode(state)
+            try data.write(to: getPersistenceURL())
+        } catch {
+            print("Failed to save playback state: \(error)")
+        }
+    }
+
+    private func restoreState() {
+        do {
+            let data = try Data(contentsOf: getPersistenceURL())
+            let restoredState = try JSONDecoder().decode(PlaybackState.self, from: data)
+            self.state = restoredState
+
+            // Re-setup audio player if needed, but don't auto-play
+            self.state.status = .paused
+            if let track = state.currentTrack {
+                // Pre-load track without playing
+                Task {
+                    try? await prepareTrack(track: track)
+                    seek(to: state.currentTime)
+                }
+            }
+        } catch {
+            print("Failed to restore playback state: \(error)")
+        }
+    }
+
+    private func prepareTrack(track: Track) async throws {
         guard let provider = ProviderRegistry.shared.provider(for: track.providerType) else {
             throw ProviderError.streamUnavailable
         }
         
-        state.status = .loading
-        
         let streamURL: URL
-        if track.providerType == .soundcloud, let url = track.streamURL {
-            streamURL = url
-        } else {
-            streamURL = try await provider.getStreamURL(for: track)
-        }
-        
-        state.currentTrack = track
-        state.status = .playing
+        // Re-fetch stream URL dynamically to avoid expiration
+        streamURL = try await provider.getStreamURL(for: track)
         
         let playerItem = AVPlayerItem(url: streamURL)
         audioPlayer = AVPlayer(playerItem: playerItem)
         audioPlayer?.volume = state.volume
-        
         addPeriodicTimeObserver()
+    }
+
+    func play(track: Track) async throws {
+        state.status = .loading
+
+        try await prepareTrack(track: track)
+
+        state.currentTrack = track
+        state.status = .playing
+
         audioPlayer?.play()
         
         scrobbleTracker.startTracking(track: track)
+        updateMediaKeys()
     }
     
     func playQueue(at index: Int = 0) async throws {
@@ -54,22 +130,35 @@ class PlaybackEngine: ObservableObject {
         try await play(track: state.queue[index])
     }
     
+    func moveQueue(from source: IndexSet, to destination: Int) {
+        state.queue.move(fromOffsets: source, toOffset: destination)
+        // If the current playing track index shifted, we should ideally update currentIndex,
+        // but for a simple queue, this is often enough.
+    }
+
     func pause() {
         audioPlayer?.pause()
         state.status = .paused
+        scrobbleTracker.pause()
+        updateMediaKeys()
     }
     
     func resume() {
         audioPlayer?.play()
         state.status = .playing
+        scrobbleTracker.resume()
+        updateMediaKeys()
     }
     
     func togglePlayPause() async throws {
         switch state.status {
         case .playing:
             pause()
-        case .paused:
+        case .paused, .stopped:
             resume()
+            if audioPlayer == nil, let track = state.currentTrack {
+               try await play(track: track)
+            }
         default:
             break
         }
@@ -132,13 +221,28 @@ class PlaybackEngine: ObservableObject {
         state.queue.append(track)
     }
     
+    private func updateMediaKeys() {
+        MediaKeyHandler.shared.updateNowPlaying(
+            track: state.currentTrack,
+            isPlaying: state.status == .playing,
+            currentTime: state.currentTime
+        )
+    }
+
     private func addPeriodicTimeObserver() {
+        guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 1, preferredTimescale: 600)
         timeObserver = audioPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
             self.state.currentTime = time.seconds
             
-            self.scrobbleTracker.updateProgress(time: time.seconds)
+            if self.state.status == .playing {
+                self.scrobbleTracker.updateProgress(time: time.seconds)
+                // Update media keys occasionally to keep elapsed time somewhat accurate
+                if Int(time.seconds) % 5 == 0 {
+                    self.updateMediaKeys()
+                }
+            }
             
             // Auto-advance when track ends
             if let duration = self.state.currentTrack?.duration,
@@ -159,28 +263,47 @@ class PlaybackEngine: ObservableObject {
 
 class ScrobbleTracker {
     private var currentTrack: Track?
-    private var playStartTime: Date?
+    private var actualListenTime: TimeInterval = 0
+    private var lastUpdateTime: TimeInterval = 0
     private var hasScrobbled = false
     private var scrobbleThreshold: TimeInterval = 0
+    private var isTracking = false
     
     func startTracking(track: Track) {
         currentTrack = track
-        playStartTime = Date()
+        actualListenTime = 0
+        lastUpdateTime = 0
         hasScrobbled = false
+        isTracking = true
         // Last.fm: scrobble at 50% or 4 minutes, whichever comes first
         scrobbleThreshold = min(track.duration * 0.5, 240)
     }
     
+    func pause() {
+        isTracking = false
+    }
+
+    func resume() {
+        isTracking = true
+    }
+
     func updateProgress(time: TimeInterval) {
-        guard let track = currentTrack, !hasScrobbled else { return }
+        guard isTracking, let track = currentTrack, !hasScrobbled else {
+            lastUpdateTime = time
+            return
+        }
+
+        let delta = max(0, time - lastUpdateTime)
+        actualListenTime += delta
+        lastUpdateTime = time
         
-        if time >= scrobbleThreshold {
+        if actualListenTime >= scrobbleThreshold {
             Task {
                 await LastFmScrobbler.shared.scrobble(track: track)
             }
             hasScrobbled = true
-        } else if time >= 30 {
-            // Send "now playing" after 30 seconds
+        } else if actualListenTime >= 30 && actualListenTime - delta < 30 {
+            // Send "now playing" once after 30 seconds of actual listening
             Task {
                 await LastFmScrobbler.shared.updateNowPlaying(track: track)
             }

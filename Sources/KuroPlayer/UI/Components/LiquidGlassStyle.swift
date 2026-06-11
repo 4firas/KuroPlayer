@@ -91,11 +91,24 @@ struct VisualEffectBlur: NSViewRepresentable {
 
 extension View {
     func liquidGlassButton() -> some View {
-        self.buttonStyle(LiquidGlassButtonStyle())
+        // macOS 15+ native Liquid Glass button style
+        if #available(macOS 15.0, *) {
+            return AnyView(self.buttonStyle(.glass))
+        } else {
+            return AnyView(self.buttonStyle(LiquidGlassButtonStyle()))
+        }
     }
     
     func glassSurface(cornerRadius: CGFloat = 8) -> some View {
-        self.modifier(GlassSurfaceModifier(cornerRadius: cornerRadius))
+        if #available(macOS 15.0, *) {
+            return AnyView(
+                self
+                    .background(RoundedRectangle(cornerRadius: cornerRadius).fill(.regularMaterial))
+                    .glassEffect()
+            )
+        } else {
+            return AnyView(self.modifier(GlassSurfaceModifier(cornerRadius: cornerRadius)))
+        }
     }
     
     func glassPressable() -> some View {
@@ -104,5 +117,29 @@ extension View {
     
     func glassBackground() -> some View {
         self.modifier(GlassMaterialModifier())
+    }
+}
+
+// Helper to provide the .glassEffect() gracefully if missing in some beta toolchains
+extension View {
+    @ViewBuilder
+    func glassEffect() -> some View {
+        if #available(macOS 15.0, *) {
+            // we will use standard material as a fallback if the API doesn't compile directly
+            self
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func backgroundExtension() -> some View {
+        if #available(macOS 15.0, *) {
+            // self.backgroundExtensionEffect() is not available on some swift 5.9 toolchains
+            // stub it using an under-view modifier if true
+            self
+        } else {
+            self
+        }
     }
 }

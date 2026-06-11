@@ -66,24 +66,31 @@ struct LibraryView: View {
 
 struct TrackRowButtonStyle: ButtonStyle {
     let isActive: Bool
+    @State private var isHovered: Bool = false
     
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(activeBackground(configuration.isPressed))
+                    .fill(activeBackground(isPressed: configuration.isPressed))
             )
             .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
             .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
             .animation(.easeInOut(duration: 0.15), value: isActive)
+            .onHover { hovering in
+                isHovered = hovering
+            }
     }
     
-    private func activeBackground(_ isPressed: Bool) -> Color {
+    private func activeBackground(isPressed: Bool) -> Color {
         if isPressed {
-            return KurokulaTheme.hoverBackground.opacity(0.6)
+            return KurokulaTheme.hoverBackground.opacity(0.8)
         }
         if isActive {
-            return KurokulaTheme.hoverBackground
+            return KurokulaTheme.hoverBackground.opacity(0.6)
+        }
+        if isHovered {
+            return KurokulaTheme.hoverBackground.opacity(0.3)
         }
         return Color.clear
     }
@@ -93,19 +100,33 @@ struct TrackRowButtonStyle: ButtonStyle {
 
 struct TrackRowContent: View {
     let track: Track
+    @EnvironmentObject var viewModel: PlayerViewModel
     
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: track.artworkURL) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(KurokulaTheme.gray.opacity(0.3))
+            ZStack {
+                AsyncImage(url: track.artworkURL) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack {
+                        Rectangle()
+                            .fill(KurokulaTheme.gray.opacity(0.3))
+                        Image(systemName: "music.note")
+                            .foregroundColor(KurokulaTheme.gray)
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .cornerRadius(4)
+
+                if viewModel.currentTrack?.id == track.id {
+                    NowPlayingIndicator(isPlaying: viewModel.isPlaying)
+                        .frame(width: 44, height: 44)
+                        .background(Color.black.opacity(0.5))
+                        .cornerRadius(4)
+                }
             }
-            .frame(width: 44, height: 44)
-            .cornerRadius(4)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)

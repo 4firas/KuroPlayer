@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlayerBarView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
+    @State private var showingQueue = false
     
     var body: some View {
         VStack(spacing: 8) {
@@ -39,8 +40,12 @@ struct PlayerBarView: View {
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                         } placeholder: {
-                            Rectangle()
-                                .fill(KurokulaTheme.gray.opacity(0.3))
+                            ZStack {
+                                Rectangle()
+                                    .fill(KurokulaTheme.gray.opacity(0.3))
+                                Image(systemName: "music.note")
+                                    .foregroundColor(KurokulaTheme.gray)
+                            }
                         }
                         .frame(width: 56, height: 56)
                         .cornerRadius(4)
@@ -76,13 +81,23 @@ struct PlayerBarView: View {
                     }
                     .buttonStyle(.borderless)
                     .scaleEffect(0.8)
+                    .keyboardShortcut(.leftArrow, modifiers: [.command])
                     
-                    Button(action: viewModel.togglePlayPause) {
-                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 22))
-                            .foregroundColor(KurokulaTheme.secondary)
+                    ZStack {
+                        if viewModel.playbackEngine.state.status == .loading {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Button(action: viewModel.togglePlayPause) {
+                                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(KurokulaTheme.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .keyboardShortcut(.space, modifiers: [])
+                        }
                     }
-                    .buttonStyle(.borderless)
+                    .frame(width: 32, height: 32)
                     .overlay(
                         Circle()
                             .stroke(KurokulaTheme.secondary.opacity(0.3), lineWidth: 1)
@@ -95,12 +110,23 @@ struct PlayerBarView: View {
                             .foregroundColor(KurokulaTheme.foreground)
                     }
                     .buttonStyle(.borderless)
+                    .keyboardShortcut(.rightArrow, modifiers: [.command])
                 }
                 
                 Spacer()
                 
                 // Time and volume
                 HStack(spacing: 12) {
+                    Button(action: { showingQueue.toggle() }) {
+                        Image(systemName: "list.bullet")
+                            .foregroundColor(KurokulaTheme.gray)
+                    }
+                    .buttonStyle(.borderless)
+                    .popover(isPresented: $showingQueue, arrowEdge: .top) {
+                        QueueView()
+                            .environmentObject(viewModel)
+                    }
+
                     Text(formatTime(viewModel.currentTime))
                         .font(.caption)
                         .foregroundColor(KurokulaTheme.gray)

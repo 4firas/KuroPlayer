@@ -11,6 +11,11 @@ protocol MusicProvider {
     func getStreamURL(for track: Track) async throws -> URL
     func getLibrary() async throws -> [Track]
     func getPlaylists() async throws -> [Playlist]
+
+    func createPlaylist(name: String) async throws -> Playlist
+    func addTrackToPlaylist(playlist: Playlist, track: Track) async throws
+    func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws
+    func deletePlaylist(playlist: Playlist) async throws
 }
 
 enum ProviderError: Error, LocalizedError {

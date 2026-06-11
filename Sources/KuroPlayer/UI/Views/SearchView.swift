@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
+    @FocusState private var isSearchFocused: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -20,6 +21,7 @@ struct SearchView: View {
                 
                 TextField("Search tracks...", text: $viewModel.searchText)
                     .textFieldStyle(.plain)
+                    .focused($isSearchFocused)
                     .foregroundColor(KurokulaTheme.foreground)
                     .onChange(of: viewModel.searchText) { newValue in
                         Task { await viewModel.search(query: newValue) }
@@ -84,5 +86,9 @@ struct SearchView: View {
             }
         }
         .background(KurokulaTheme.background)
+        .keyboardShortcut("f", modifiers: .command)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            isSearchFocused = true
+        }
     }
 }

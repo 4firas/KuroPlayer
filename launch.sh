@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-PROJECT_DIR="$HOME/Documents/projects/KuroPlayer"
+PROJECT_DIR="$(pwd)"
 cd "$PROJECT_DIR"
 BINARY="$PROJECT_DIR/.build/debug/KuroPlayer"
 APP_DIR="$PROJECT_DIR/KuroPlayer.app"
@@ -58,6 +58,10 @@ fi
 
 # Kill previous instance
 pkill -f "KuroPlayer.app" 2>/dev/null || true
+
+# Sign
+echo "🔑 Signing..."
+codesign --force --deep --sign - "$APP_DIR"
 
 # Launch
 echo "🚀 Launching..."

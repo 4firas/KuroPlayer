@@ -3,12 +3,14 @@ import Foundation
 enum MusicProviderType: String, Codable, CaseIterable, Identifiable {
     case youtubeMusic
     case soundcloud
+    case local
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .youtubeMusic: return "YouTube Music"
         case .soundcloud: return "SoundCloud"
+        case .local: return "Local Files"
         }
     }
 
@@ -16,6 +18,7 @@ enum MusicProviderType: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .youtubeMusic: return "play.rectangle"
         case .soundcloud: return "cloud"
+        case .local: return "folder"
         }
     }
 }
