@@ -17,6 +17,7 @@ struct PlayerBarView: View {
                             .fill(KurokulaTheme.accent)
                             .frame(width: geometry.size.width * progress, height: 4)
                     }
+                    .glassEffect(.clear, in: .capsule)
                 }
                 .frame(height: 4)
                 .onTapGesture { location in
@@ -117,6 +118,7 @@ struct PlayerBarView: View {
         }
         .padding(16)
         .glassEffect(.regular, in: .rect(cornerRadius: 0))
+        .backgroundExtensionEffect()
     }
     
     private var progress: Double {

@@ -37,7 +37,10 @@ class PlaybackEngine: PlaybackEngineProtocol {
     
     init() {
         setupAudioSession()
-        restoreState()
+        // Restore state asynchronously to avoid blocking init
+        Task { @MainActor in
+            self.restoreState()
+        }
     }
     
     private func setupAudioSession() {
@@ -80,17 +83,18 @@ class PlaybackEngine: PlaybackEngineProtocol {
         do {
             let data = try Data(contentsOf: getPersistenceURL())
             let restoredState = try JSONDecoder().decode(PlaybackState.self, from: data)
-            self.state = restoredState
-
-            // Re-setup audio player if needed, but don't auto-play
-            self.state.status = .paused
-            if let track = state.currentTrack {
-                // Pre-load track without playing
-                Task {
-                    try? await prepareTrack(track: track)
-                    seek(to: state.currentTime)
-                }
-            }
+            
+            // Restore metadata only - don't prepare tracks
+            self.state.currentTrack = restoredState.currentTrack
+            self.state.queue = restoredState.queue
+            self.state.currentIndex = restoredState.currentIndex
+            self.state.volume = restoredState.volume
+            self.state.isShuffled = restoredState.isShuffled
+            self.state.repeatMode = restoredState.repeatMode
+            self.state.currentTime = restoredState.currentTime
+            
+            // Always start paused - user can resume manually
+            self.state.status = .stopped
         } catch {
             print("Failed to restore playback state: \(error)")
         }

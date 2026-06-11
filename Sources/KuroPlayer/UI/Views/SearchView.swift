@@ -25,7 +25,7 @@ struct SearchView: View {
                 }
             }
             .padding(12)
-            .glassEffect(.regular, in: .rect(cornerRadius: 12))
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
             .padding(24)
             
             // Results

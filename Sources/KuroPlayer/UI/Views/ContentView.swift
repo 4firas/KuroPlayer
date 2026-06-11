@@ -281,6 +281,7 @@ struct ServiceStatusCard: View {
             Circle()
                 .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
                 .frame(width: 8, height: 8)
+                .glassEffect(.clear, in: .circle)
         }
         .padding()
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))

@@ -107,6 +107,6 @@ struct QueueRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(isActive ? .regular.tint(KurokulaTheme.accent.opacity(0.2)) : .clear, in: .rect(cornerRadius: 8))
+        .glassEffect(.regular.tint(isActive ? KurokulaTheme.accent.opacity(0.2) : .clear), in: .rect(cornerRadius: 8))
     }
 }
