@@ -1,0 +1,20 @@
+# Build
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+
+# App bundle
+KuroPlayer.app/
+
+# Xcode
+*.xcworkspace/xcuserdata/
+*.xcscmblueprint
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# Secrets
+*.p12
+*.mobileprovision
