@@ -171,7 +171,7 @@ struct ProviderRow: View {
             Circle()
                 .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
                 .frame(width: 8, height: 8)
-                .glassEffect(.clear, in: .circle)
+                .glassEffect(.regular, in: .circle)
             
             if isConnected {
                 Button("Disconnect", action: onDisconnect)

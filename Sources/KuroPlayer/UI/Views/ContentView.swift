@@ -28,6 +28,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .backgroundExtensionEffect()
+                .animation(.smooth(duration: 0.3), value: viewModel.selectedView)
                 
                 // Player bar
                 PlayerBarView()
@@ -45,16 +46,19 @@ struct ContentView: View {
         .overlay(alignment: .top) {
             if let errorMessage = viewModel.errorMessage {
                 ErrorBanner(message: errorMessage) {
-                    withAnimation {
+                    withAnimation(.smooth(duration: 0.25)) {
                         viewModel.dismissError()
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity.combined(with: .scale(scale: 0.9))
+                ))
             }
         }
-        .animation(.easeInOut, value: viewModel.errorMessage)
+        .animation(.smooth(duration: 0.3), value: viewModel.errorMessage)
     }
 }
 
@@ -80,7 +84,9 @@ struct ErrorBanner: View {
         .padding(.horizontal, 20)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                onDismiss()
+                withAnimation(.smooth(duration: 0.25)) {
+                    onDismiss()
+                }
             }
         }
     }
@@ -281,7 +287,7 @@ struct ServiceStatusCard: View {
             Circle()
                 .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
                 .frame(width: 8, height: 8)
-                .glassEffect(.clear, in: .circle)
+                .glassEffect(.regular, in: .circle)
         }
         .padding()
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))

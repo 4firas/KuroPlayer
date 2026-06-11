@@ -43,7 +43,7 @@ import CryptoKit
         }
         
         try await getSession(token: token)
-        await AuthManager.shared.setLastFmAuthenticated(true)
+        AuthManager.shared.setLastFmAuthenticated(true)
     }
     
     private func getSession(token: String) async throws {
@@ -103,6 +103,6 @@ import CryptoKit
     func logout() {
         sessionKey = nil
         username = nil
-        AuthManager.shared.isAuthenticatedLastFm = false
+        AuthManager.shared.setLastFmAuthenticated(false)
     }
 }

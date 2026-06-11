@@ -2,12 +2,15 @@ import Foundation
 import AppKit
 import AuthenticationServices
 
+@MainActor
 class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     static let shared = AuthManager()
 
     @Published var isAuthenticatedYouTubeMusic = false
     @Published var isAuthenticatedSoundCloud = false
     @Published var isAuthenticatedLastFm = false
+    
+    private var currentOAuthSession: ASWebAuthenticationSession?
 
     override private init() {
         super.init()
@@ -23,7 +26,8 @@ class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationCo
             let session = ASWebAuthenticationSession(
                 url: url,
                 callbackURLScheme: callbackScheme
-            ) { callbackURL, error in
+            ) { [weak self] callbackURL, error in
+                self?.currentOAuthSession = nil
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else if let callbackURL = callbackURL {
@@ -34,6 +38,7 @@ class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationCo
             }
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
+            self.currentOAuthSession = session
             session.start()
         }
     }
@@ -52,7 +57,7 @@ class AuthManager: NSObject, ObservableObject, ASWebAuthenticationPresentationCo
         switch provider {
         case .youtubeMusic: isAuthenticatedYouTubeMusic = value
         case .soundcloud: isAuthenticatedSoundCloud = value
-        case .local: break // Local files don't need auth
+        case .local: break
         }
     }
 
