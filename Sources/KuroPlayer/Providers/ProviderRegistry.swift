@@ -8,6 +8,7 @@ class ProviderRegistry {
     private init() {
         providers[.youtubeMusic] = YouTubeMusicProvider()
         providers[.soundcloud] = SoundCloudProvider()
+        providers[.local] = LocalFileProvider()
     }
     
     func provider(for type: MusicProviderType) -> MusicProvider? {

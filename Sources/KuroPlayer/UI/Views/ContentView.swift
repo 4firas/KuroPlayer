@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var viewModel = PlayerViewModel()
+    @EnvironmentObject var viewModel: PlayerViewModel
     @StateObject private var authManager = AuthManager.shared
     
     var body: some View {
@@ -14,15 +14,21 @@ struct ContentView: View {
                     switch viewModel.selectedView {
                     case .home:
                         HomeView()
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     case .search:
                         SearchView()
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     case .library:
                         LibraryView()
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     case .settings:
                         SettingsView()
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
                 }
+                .animation(.easeInOut(duration: 0.2), value: viewModel.selectedView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .backgroundExtension()
                 
                 PlayerBarView()
                     .environmentObject(viewModel)
@@ -36,14 +42,39 @@ struct ContentView: View {
                 await viewModel.loadLibrary()
             }
         }
-        .alert("Error", isPresented: Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )) {
-            Button("OK") { viewModel.dismissError() }
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+        .overlay(alignment: .top) {
+            if let errorMessage = viewModel.errorMessage {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(KurokulaTheme.accent)
+                    Text(errorMessage)
+                        .foregroundColor(KurokulaTheme.foreground)
+                    Spacer()
+                    Button(action: { viewModel.dismissError() }) {
+                        Image(systemName: "xmark")
+                            .foregroundColor(KurokulaTheme.gray)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding()
+                .background(KurokulaTheme.cardBackground)
+                .cornerRadius(8)
+                .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                        if viewModel.errorMessage == errorMessage {
+                            withAnimation {
+                                viewModel.dismissError()
+                            }
+                        }
+                    }
+                }
+            }
         }
+        .animation(.easeInOut, value: viewModel.errorMessage)
     }
 }
 
@@ -71,9 +102,15 @@ struct HomeView: View {
                             .foregroundColor(KurokulaTheme.foreground)
                         
                         HStack(spacing: 12) {
-                            QuickActionButton(icon: "magnifyingglass", title: "Search", color: KurokulaTheme.accent)
-                            QuickActionButton(icon: "music.note.list", title: "Library", color: KurokulaTheme.secondary)
-                            QuickActionButton(icon: "waveform", title: "Radio", color: KurokulaTheme.success)
+                            QuickActionButton(icon: "magnifyingglass", title: "Search", color: KurokulaTheme.accent) {
+                                viewModel.selectedView = .search
+                            }
+                            QuickActionButton(icon: "music.note.list", title: "Library", color: KurokulaTheme.secondary) {
+                                viewModel.selectedView = .library
+                            }
+                            QuickActionButton(icon: "waveform", title: "Radio", color: KurokulaTheme.success) {
+                                // future feature
+                            }
                         }
                     }
                     .padding(.horizontal)
@@ -90,9 +127,7 @@ struct HomeView: View {
                                 HStack(spacing: 12) {
                                     ForEach(viewModel.libraryTracks.prefix(10)) { track in
                                         TrackCard(track: track)
-                                            .onTapGesture {
-                                                viewModel.play(track: track)
-                                            }
+                                            .environmentObject(viewModel)
                                     }
                                 }
                                 .padding(.horizontal)
@@ -140,9 +175,10 @@ struct QuickActionButton: View {
     let icon: String
     let title: String
     let color: Color
+    let action: () -> Void
     
     var body: some View {
-        Button(action: {}) {
+        Button(action: action) {
             VStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.title2)
@@ -159,19 +195,36 @@ struct QuickActionButton: View {
 
 struct TrackCard: View {
     let track: Track
+    @EnvironmentObject var viewModel: PlayerViewModel
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            AsyncImage(url: track.artworkURL) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(KurokulaTheme.gray.opacity(0.3))
-            }
-            .frame(width: 140, height: 140)
-            .cornerRadius(4)
+        Button(action: {
+            viewModel.play(track: track)
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack {
+                    AsyncImage(url: track.artworkURL) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        ZStack {
+                            Rectangle()
+                                .fill(KurokulaTheme.gray.opacity(0.3))
+                            Image(systemName: "music.note")
+                                .foregroundColor(KurokulaTheme.gray)
+                        }
+                    }
+                    .frame(width: 140, height: 140)
+                    .cornerRadius(4)
+
+                    if viewModel.currentTrack?.id == track.id {
+                        NowPlayingIndicator(isPlaying: viewModel.isPlaying)
+                            .frame(width: 140, height: 140)
+                            .background(Color.black.opacity(0.5))
+                            .cornerRadius(4)
+                    }
+                }
             
             Text(track.title)
                 .font(.caption)
@@ -179,12 +232,14 @@ struct TrackCard: View {
                 .foregroundColor(KurokulaTheme.foreground)
                 .lineLimit(1)
             
-            Text(track.artist)
-                .font(.caption2)
-                .foregroundColor(KurokulaTheme.gray)
-                .lineLimit(1)
+                Text(track.artist)
+                    .font(.caption2)
+                    .foregroundColor(KurokulaTheme.gray)
+                    .lineLimit(1)
+            }
+            .frame(width: 140)
         }
-        .frame(width: 140)
+        .buttonStyle(.plain)
     }
 }
 

@@ -117,6 +117,8 @@ struct SidebarView: View {
             return AuthManager.shared.isAuthenticatedYouTubeMusic
         case .soundcloud:
             return AuthManager.shared.isAuthenticatedSoundCloud
+        case .local:
+            return true
         }
     }
 }

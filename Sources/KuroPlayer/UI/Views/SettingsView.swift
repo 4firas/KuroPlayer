@@ -107,8 +107,8 @@ struct SettingsView: View {
                                 .font(.headline)
                                 .foregroundColor(KurokulaTheme.secondary)
                             
-                            ApiKeyField(label: "Client ID", key: "soundcloud_client_id", placeholder: "Get from soundcloud.com/developers")
-                            ApiKeyField(label: "Client Secret", key: "soundcloud_client_secret", placeholder: "Get from soundcloud.com/developers")
+                            ApiKeyField(label: "Client ID", key: "soundcloud_client_id", placeholder: "Not needed for anonymous scraping")
+                            ApiKeyField(label: "Client Secret", key: "soundcloud_client_secret", placeholder: "Not needed for anonymous scraping")
                         }
                     }
                     .padding()

@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "KuroPlayer",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v15)
     ],
     dependencies: [],
     targets: [
@@ -12,6 +12,11 @@ let package = Package(
             name: "KuroPlayer",
             dependencies: [],
             path: "Sources/KuroPlayer"
+        ),
+        .testTarget(
+            name: "KuroPlayerTests",
+            dependencies: ["KuroPlayer"],
+            path: "Tests/KuroPlayerTests"
         )
     ]
 )
