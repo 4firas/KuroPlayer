@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-PROJECT_DIR="$HOME/Documents/projects/KuroPlayer"
+PROJECT_DIR="$(pwd)"
 cd "$PROJECT_DIR"
 BINARY="$PROJECT_DIR/.build/debug/KuroPlayer"
 APP_DIR="$PROJECT_DIR/KuroPlayer.app"
@@ -15,9 +15,8 @@ swift build
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BINARY" "$CONTENTS/MacOS/KuroPlayer"
 
-# Info.plist (create once)
-if [ ! -f "$CONTENTS/Info.plist" ]; then
-    cat > "$CONTENTS/Info.plist" << 'PLIST'
+# Info.plist (always regenerate)
+cat > "$CONTENTS/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -31,9 +30,9 @@ if [ ! -f "$CONTENTS/Info.plist" ]; then
     <key>CFBundleDisplayName</key>
     <string>KuroPlayer</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.0.1</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -54,10 +53,16 @@ if [ ! -f "$CONTENTS/Info.plist" ]; then
 </dict>
 </plist>
 PLIST
-fi
 
 # Kill previous instance
 pkill -f "KuroPlayer.app" 2>/dev/null || true
+
+# Clean extended attributes
+xattr -cr "$APP_DIR" 2>/dev/null || true
+
+# Sign
+echo "🔑 Signing..."
+codesign --force --deep --sign - "$APP_DIR"
 
 # Launch
 echo "🚀 Launching..."

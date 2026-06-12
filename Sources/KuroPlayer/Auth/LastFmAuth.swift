@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-class LastFmAuth {
+@MainActor class LastFmAuth {
     static let shared = LastFmAuth()
     
     private var apiKey: String {
@@ -43,7 +43,7 @@ class LastFmAuth {
         }
         
         try await getSession(token: token)
-        await AuthManager.shared.setLastFmAuthenticated(true)
+        AuthManager.shared.setLastFmAuthenticated(true)
     }
     
     private func getSession(token: String) async throws {
@@ -103,6 +103,6 @@ class LastFmAuth {
     func logout() {
         sessionKey = nil
         username = nil
-        AuthManager.shared.isAuthenticatedLastFm = false
+        AuthManager.shared.setLastFmAuthenticated(false)
     }
 }

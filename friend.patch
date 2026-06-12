@@ -1,0 +1,4651 @@
+From 157ee6b2c5195fa8311701fe38a4e06aa547ab9a Mon Sep 17 00:00:00 2001
+From: lostf1sh <slorixbaba@outlook.com>
+Date: Fri, 12 Jun 2026 15:47:17 +0300
+Subject: [PATCH] =?UTF-8?q?=E2=9C=A8=20Parametric=20EQ,=20playlist=20impor?=
+ =?UTF-8?q?t,=20theme=20system=20+=20yt-dlp=20speed/consistency=20overhaul?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Shared yt-dlp runner: binary auto-discovery, timeouts, cancellation,
+  consistent flags across YT Music & SoundCloud; debounced search,
+  stream-URL caching, next-track prefetch
+- Playlist import for SoundCloud sets and YouTube/YT Music playlists
+  (full extraction for SC incl. set cover art), persisted locally,
+  new Playlists grid + detail views with sidebar navigation
+- Parametric EQ via MTAudioProcessingTap + Apple NBandEQ AudioUnit,
+  oratory1990/AutoEq presets, peqdb.com paste-import, live updates
+- Theme system: follow macOS appearance + system accent, secret
+  Kurokula unlock (7 clicks on version)
+- Playback fixes: single AVPlayer + replaceCurrentItem (progress bar
+  froze after first track), AVPlayerItemDidPlayToEndTime auto-advance,
+  repeat-all wrap, no stuck loading state, scrub-safe scrobbling
+- UI: hidden scrollbars, themed sliders, scrubbable progress bar,
+  shuffle/repeat controls, loading spinner, standardized headers
+---
+ ISSUES.md                                     |  15 +
+ Sources/KuroPlayer/App/KuroPlayerApp.swift    |  14 +-
+ Sources/KuroPlayer/Audio/EQAudioTap.swift     | 260 +++++++++++++
+ .../KuroPlayer/Audio/EqualizerManager.swift   | 347 ++++++++++++++++++
+ Sources/KuroPlayer/Models/PlaybackState.swift |   2 +
+ Sources/KuroPlayer/Models/Playlist.swift      |  31 +-
+ .../KuroPlayer/Playback/PlaybackEngine.swift  | 333 ++++++++++++-----
+ .../Providers/LocalFileProvider.swift         |  12 +
+ .../Providers/MusicProviderProtocol.swift     |  21 +-
+ .../Providers/ProviderRegistry.swift          |  26 +-
+ .../Providers/SoundCloudProvider.swift        | 239 ++++++------
+ .../Providers/YouTubeMusicProvider.swift      | 232 +++++-------
+ .../KuroPlayer/UI/Components/KuroSlider.swift |  40 ++
+ .../UI/Components/NowPlayingIndicator.swift   |  10 +-
+ .../KuroPlayer/UI/Theme/ThemeManager.swift    | 107 ++++++
+ Sources/KuroPlayer/UI/Views/ContentView.swift |  69 ++--
+ .../UI/Views/EqualizerSettingsView.swift      | 159 ++++++++
+ Sources/KuroPlayer/UI/Views/LibraryView.swift |  11 +-
+ .../KuroPlayer/UI/Views/PlayerBarView.swift   | 167 ++++++---
+ .../UI/Views/PlaylistDetailView.swift         | 148 ++++++++
+ .../KuroPlayer/UI/Views/PlaylistsView.swift   | 161 ++++++++
+ Sources/KuroPlayer/UI/Views/QueueView.swift   |  41 ++-
+ Sources/KuroPlayer/UI/Views/SearchView.swift  |  85 ++++-
+ .../KuroPlayer/UI/Views/SettingsView.swift    | 227 ++++++++----
+ Sources/KuroPlayer/UI/Views/SidebarView.swift |  77 ++--
+ Sources/KuroPlayer/Utilities/Cache.swift      |  10 +-
+ .../KuroPlayer/Utilities/PlaylistStore.swift  |  59 +++
+ Sources/KuroPlayer/Utilities/YtDlp.swift      | 230 ++++++++++++
+ .../ViewModels/PlayerViewModel.swift          | 184 ++++++++--
+ 29 files changed, 2715 insertions(+), 602 deletions(-)
+ create mode 100644 Sources/KuroPlayer/Audio/EQAudioTap.swift
+ create mode 100644 Sources/KuroPlayer/Audio/EqualizerManager.swift
+ create mode 100644 Sources/KuroPlayer/UI/Components/KuroSlider.swift
+ create mode 100644 Sources/KuroPlayer/UI/Theme/ThemeManager.swift
+ create mode 100644 Sources/KuroPlayer/UI/Views/EqualizerSettingsView.swift
+ create mode 100644 Sources/KuroPlayer/UI/Views/PlaylistDetailView.swift
+ create mode 100644 Sources/KuroPlayer/UI/Views/PlaylistsView.swift
+ create mode 100644 Sources/KuroPlayer/Utilities/PlaylistStore.swift
+ create mode 100644 Sources/KuroPlayer/Utilities/YtDlp.swift
+
+diff --git a/ISSUES.md b/ISSUES.md
+index 04382f0..3136642 100644
+--- a/ISSUES.md
++++ b/ISSUES.md
+@@ -1,5 +1,20 @@
+ # KuroPlayer — Development Issues
+ 
++## 2026-06-12 Update (large refactor, untested — built blind on Linux)
++
++Resolved in this pass: #3 (stream URLs re-fetched + short-TTL cached), #10 (search/stream caching + debounce + next-track prefetch), #13 (scrobble timer ignores seeks/stalls), #14 (spinner on play button while loading).
++
++New since the last update:
++- **Shared yt-dlp runner** (`Utilities/YtDlp.swift`): binary auto-discovery (Homebrew/MacPorts/usr-local/~/.local), consistent flags, hard timeouts, process termination on task cancellation. Both providers now behave identically.
++- **Search debounce** (350 ms) — previously every keystroke spawned two yt-dlp processes.
++- **Playlist import**: paste a SoundCloud set or YouTube/YouTube Music playlist URL in Search or the new Playlists view. SoundCloud uses full extraction (flat entries have no titles — the old breakage) and pulls the set's own cover art. Playlists persist in Application Support (`PlaylistStore`).
++- **Parametric EQ** (`Audio/`): MTAudioProcessingTap + Apple NBandEQ AudioUnit on the AVPlayer item. Bundled oratory1990/AutoEq presets (peqdb.com format); paste any preset from peqdb.com via Settings. Live updates while playing. Note: needs progressive (non-HLS) streams — format selection prefers `protocol^=http`.
++- **Theme system** (`UI/Theme/ThemeManager.swift`): System mode (follows macOS light/dark + system accent) vs Kurokula (default). Secret: 7 clicks on the version number in Settings → About unlock the Kurokula switch after leaving it.
++- **Playback engine fixes**: single AVPlayer + `replaceCurrentItem` (the periodic time observer previously died after the first track), end-of-track via `AVPlayerItemDidPlayToEndTime` instead of duration math, repeat-all index wrap, no more stuck "loading" state, shuffle preserves/restores original order, stale play requests can't clobber newer ones.
++- **UI**: scrollbars hidden (the "vertical slider on the right"), themed `KuroSlider` replaces stock volume slider, scrubbable progress bar with time labels, shuffle/repeat buttons, queue clear button, standardized headers.
++
++⚠️ None of this has been compiled or run — no Swift toolchain on the dev box. Expect a fix-up pass on first `swift build`. Most likely friction points: MTAudioProcessingTap callback signatures (EQAudioTap.swift) and strict-concurrency diagnostics.
++
+ ## Project Overview
+ 
+ macOS native music player built with SwiftUI. Unified library across YouTube Music + SoundCloud, Last.fm scrobbling, kurokula dark theme.
+diff --git a/Sources/KuroPlayer/App/KuroPlayerApp.swift b/Sources/KuroPlayer/App/KuroPlayerApp.swift
+index f5a458e..0b99924 100644
+--- a/Sources/KuroPlayer/App/KuroPlayerApp.swift
++++ b/Sources/KuroPlayer/App/KuroPlayerApp.swift
+@@ -10,6 +10,7 @@ struct KuroPlayerApp: App {
+             if let viewModel = appState.viewModel {
+                 ContentView()
+                     .environmentObject(viewModel)
++                    .environmentObject(ThemeManager.shared)
+                     .transition(.opacity)
+             } else {
+                 ProgressView("Loading KuroPlayer...")
+@@ -44,9 +45,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
+         appState = AppState()
+         
+         Task { @MainActor in
++            // Pushes persisted EQ settings to the audio bridge before the
++            // first track plays — without this an enabled EQ stays silent
++            // until the Settings view is opened.
++            _ = EqualizerManager.shared
++
+             engine = PlaybackEngine()
+             let vm = PlayerViewModel(playbackEngine: engine)
+-            
++
+             MediaKeyHandler.shared.setup(engine: engine)
+ 
+             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+@@ -58,7 +64,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
+             popover = NSPopover()
+             popover.contentSize = NSSize(width: 250, height: 150)
+             popover.behavior = .transient
+-            popover.contentViewController = NSHostingController(rootView: MiniPlayerView().environmentObject(vm))
++            popover.contentViewController = NSHostingController(
++                rootView: MiniPlayerView()
++                    .environmentObject(vm)
++                    .environmentObject(ThemeManager.shared)
++            )
+             
+             // Set viewModel last to trigger UI update
+             appState.viewModel = vm
+diff --git a/Sources/KuroPlayer/Audio/EQAudioTap.swift b/Sources/KuroPlayer/Audio/EQAudioTap.swift
+new file mode 100644
+index 0000000..6e28190
+--- /dev/null
++++ b/Sources/KuroPlayer/Audio/EQAudioTap.swift
+@@ -0,0 +1,260 @@
++import Foundation
++import AVFoundation
++import AudioToolbox
++import MediaToolbox
++import CoreMedia
++
++// MARK: - NBandEQ constants
++//
++// Numeric values from AudioToolbox (AUComponent.h / AudioUnitParameters.h /
++// AudioUnitProperties.h), defined locally so this file does not depend on
++// the SDK exposing every kAUNBandEQ* symbol to Swift.
++
++private enum NBandEQ {
++    static let subType: OSType = 0x6E62_6571 // 'nbeq' — kAudioUnitSubType_NBandEQ
++
++    // Per-band parameter IDs: base + band index.
++    static let paramGlobalGain: AudioUnitParameterID = 0     // kAUNBandEQParam_GlobalGain
++    static let paramBypassBand: AudioUnitParameterID = 1000  // kAUNBandEQParam_BypassBand
++    static let paramFilterType: AudioUnitParameterID = 2000  // kAUNBandEQParam_FilterType
++    static let paramFrequency: AudioUnitParameterID = 3000   // kAUNBandEQParam_Frequency
++    static let paramGain: AudioUnitParameterID = 4000        // kAUNBandEQParam_Gain
++    static let paramBandwidth: AudioUnitParameterID = 5000   // kAUNBandEQParam_Bandwidth
++
++    static let numberOfBandsProperty: AudioUnitPropertyID = 2200 // kAUNBandEQProperty_NumberOfBands
++}
++
++// MARK: - Settings bridge
++
++/// Thread-safe bridge between the main-actor EqualizerManager and the audio
++/// pipeline. Holds the latest snapshot and the set of live NBandEQ units so
++/// settings changes apply to the currently playing track immediately
++/// (AudioUnitSetParameter is safe to call from any thread).
++final class EQSettingsBridge: @unchecked Sendable {
++    static let shared = EQSettingsBridge()
++
++    private let lock = NSLock()
++    private var snapshot = EQSnapshot(enabled: false, preamp: 0, bands: [])
++    private var liveUnits: [AudioUnit] = []
++
++    func update(_ newSnapshot: EQSnapshot) {
++        lock.lock()
++        snapshot = newSnapshot
++        let units = liveUnits
++        lock.unlock()
++
++        for unit in units {
++            Self.apply(newSnapshot, to: unit)
++        }
++    }
++
++    func register(_ unit: AudioUnit) {
++        lock.lock()
++        liveUnits.append(unit)
++        let current = snapshot
++        lock.unlock()
++
++        Self.apply(current, to: unit)
++    }
++
++    func unregister(_ unit: AudioUnit) {
++        lock.lock()
++        liveUnits.removeAll { $0 == unit }
++        lock.unlock()
++    }
++
++    private static func apply(_ snapshot: EQSnapshot, to unit: AudioUnit) {
++        let preamp: Float = snapshot.enabled ? snapshot.preamp : 0
++        AudioUnitSetParameter(unit, NBandEQ.paramGlobalGain, kAudioUnitScope_Global, 0, preamp, 0)
++
++        for band in 0..<EQSnapshot.maxBands {
++            let element = AudioUnitElement(0)
++            let offset = AudioUnitParameterID(band)
++
++            if snapshot.enabled, band < snapshot.bands.count {
++                let values = snapshot.bands[band]
++                AudioUnitSetParameter(unit, NBandEQ.paramFilterType + offset, kAudioUnitScope_Global, element, values.filterType, 0)
++                AudioUnitSetParameter(unit, NBandEQ.paramFrequency + offset, kAudioUnitScope_Global, element, values.frequency, 0)
++                AudioUnitSetParameter(unit, NBandEQ.paramBandwidth + offset, kAudioUnitScope_Global, element, values.bandwidth, 0)
++                AudioUnitSetParameter(unit, NBandEQ.paramGain + offset, kAudioUnitScope_Global, element, values.gain, 0)
++                AudioUnitSetParameter(unit, NBandEQ.paramBypassBand + offset, kAudioUnitScope_Global, element, 0, 0)
++            } else {
++                AudioUnitSetParameter(unit, NBandEQ.paramBypassBand + offset, kAudioUnitScope_Global, element, 1, 0)
++            }
++        }
++    }
++}
++
++// MARK: - Tap context
++
++/// Per-tap state. Accessed from MediaToolbox's tap callbacks; lifetime is
++/// managed via the tap's storage pointer (retained at creation, released in
++/// the finalize callback).
++private final class EQTapContext: @unchecked Sendable {
++    var audioUnit: AudioUnit?
++    var sampleTime: Float64 = 0
++}
++
++// MARK: - Audio mix factory
++
++enum EQAudioTap {
++    /// Builds an AVAudioMix whose tap routes the item's audio through Apple's
++    /// built-in N-band parametric EQ. Returns nil when the asset has no
++    /// addressable audio track (e.g. HLS streams) — playback then continues
++    /// without EQ rather than failing.
++    static func makeAudioMix(for asset: AVURLAsset) async -> AVAudioMix? {
++        guard let assetTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
++            return nil
++        }
++
++        let context = EQTapContext()
++        let clientInfo = UnsafeMutableRawPointer(Unmanaged.passRetained(context).toOpaque())
++
++        var callbacks = MTAudioProcessingTapCallbacks(
++            version: kMTAudioProcessingTapCallbacksVersion_0,
++            clientInfo: clientInfo,
++            init: eqTapInit,
++            finalize: eqTapFinalize,
++            prepare: eqTapPrepare,
++            unprepare: eqTapUnprepare,
++            process: eqTapProcess
++        )
++
++        var tapOut: Unmanaged<MTAudioProcessingTap>?
++        let status = MTAudioProcessingTapCreate(
++            kCFAllocatorDefault,
++            &callbacks,
++            kMTAudioProcessingTapCreationFlag_PostEffects,
++            &tapOut
++        )
++
++        guard status == noErr, let tap = tapOut?.takeRetainedValue() else {
++            Unmanaged<EQTapContext>.fromOpaque(clientInfo).release()
++            return nil
++        }
++
++        let inputParameters = AVMutableAudioMixInputParameters(track: assetTrack)
++        inputParameters.audioTapProcessor = tap
++
++        let audioMix = AVMutableAudioMix()
++        audioMix.inputParameters = [inputParameters]
++        return audioMix
++    }
++}
++
++// MARK: - Tap callbacks (C conventions, no captures)
++
++private func eqTapInit(
++    tap: MTAudioProcessingTap,
++    clientInfo: UnsafeMutableRawPointer?,
++    tapStorageOut: UnsafeMutablePointer<UnsafeMutableRawPointer?>
++) {
++    tapStorageOut.pointee = clientInfo
++}
++
++private func eqTapFinalize(tap: MTAudioProcessingTap) {
++    Unmanaged<EQTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
++}
++
++private func eqTapPrepare(
++    tap: MTAudioProcessingTap,
++    maxFrames: CMItemCount,
++    processingFormat: UnsafePointer<AudioStreamBasicDescription>
++) {
++    let context = Unmanaged<EQTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
++
++    var description = AudioComponentDescription(
++        componentType: kAudioUnitType_Effect,
++        componentSubType: NBandEQ.subType,
++        componentManufacturer: kAudioUnitManufacturer_Apple,
++        componentFlags: 0,
++        componentFlagsMask: 0
++    )
++
++    guard let component = AudioComponentFindNext(nil, &description) else { return }
++
++    var instance: AudioUnit?
++    guard AudioComponentInstanceNew(component, &instance) == noErr, let unit = instance else { return }
++
++    var format = processingFormat.pointee
++    let formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
++    AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, formatSize)
++    AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &format, formatSize)
++
++    var bandCount = UInt32(EQSnapshot.maxBands)
++    AudioUnitSetProperty(unit, NBandEQ.numberOfBandsProperty, kAudioUnitScope_Global, 0, &bandCount, UInt32(MemoryLayout<UInt32>.size))
++
++    var maxFramesPerSlice = UInt32(maxFrames)
++    AudioUnitSetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFramesPerSlice, UInt32(MemoryLayout<UInt32>.size))
++
++    // The EQ pulls its input from the tap's source audio.
++    var renderCallback = AURenderCallbackStruct(
++        inputProc: eqTapRenderInput,
++        inputProcRefCon: UnsafeMutableRawPointer(Unmanaged.passUnretained(tap).toOpaque())
++    )
++    AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &renderCallback, UInt32(MemoryLayout<AURenderCallbackStruct>.size))
++
++    guard AudioUnitInitialize(unit) == noErr else {
++        AudioComponentInstanceDispose(unit)
++        return
++    }
++
++    context.audioUnit = unit
++    context.sampleTime = 0
++    EQSettingsBridge.shared.register(unit)
++}
++
++private func eqTapUnprepare(tap: MTAudioProcessingTap) {
++    let context = Unmanaged<EQTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
++    if let unit = context.audioUnit {
++        EQSettingsBridge.shared.unregister(unit)
++        AudioUnitUninitialize(unit)
++        AudioComponentInstanceDispose(unit)
++        context.audioUnit = nil
++    }
++}
++
++private func eqTapProcess(
++    tap: MTAudioProcessingTap,
++    numberFrames: CMItemCount,
++    flags: MTAudioProcessingTapFlags,
++    bufferListInOut: UnsafeMutablePointer<AudioBufferList>,
++    numberFramesOut: UnsafeMutablePointer<CMItemCount>,
++    flagsOut: UnsafeMutablePointer<MTAudioProcessingTapFlags>
++) {
++    let context = Unmanaged<EQTapContext>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
++
++    guard let unit = context.audioUnit else {
++        // No EQ unit (creation failed): pass source audio straight through.
++        _ = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, nil, numberFramesOut)
++        return
++    }
++
++    var timeStamp = AudioTimeStamp()
++    timeStamp.mSampleTime = context.sampleTime
++    timeStamp.mFlags = .sampleTimeValid
++
++    var actionFlags = AudioUnitRenderActionFlags(rawValue: 0)
++    let status = AudioUnitRender(unit, &actionFlags, &timeStamp, 0, UInt32(numberFrames), bufferListInOut)
++
++    if status != noErr {
++        _ = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, nil, numberFramesOut)
++        return
++    }
++
++    context.sampleTime += Float64(numberFrames)
++    numberFramesOut.pointee = numberFrames
++}
++
++private func eqTapRenderInput(
++    inRefCon: UnsafeMutableRawPointer,
++    ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
++    inTimeStamp: UnsafePointer<AudioTimeStamp>,
++    inBusNumber: UInt32,
++    inNumberFrames: UInt32,
++    ioData: UnsafeMutablePointer<AudioBufferList>?
++) -> OSStatus {
++    guard let ioData else { return kAudio_ParamError }
++    let tap = Unmanaged<MTAudioProcessingTap>.fromOpaque(inRefCon).takeUnretainedValue()
++    return MTAudioProcessingTapGetSourceAudio(tap, CMItemCount(inNumberFrames), ioData, nil, nil, nil)
++}
+diff --git a/Sources/KuroPlayer/Audio/EqualizerManager.swift b/Sources/KuroPlayer/Audio/EqualizerManager.swift
+new file mode 100644
+index 0000000..54c6e6b
+--- /dev/null
++++ b/Sources/KuroPlayer/Audio/EqualizerManager.swift
+@@ -0,0 +1,347 @@
++import Foundation
++import Combine
++
++// MARK: - Models
++
++struct EQBand: Codable, Equatable {
++    enum FilterType: String, Codable, CaseIterable {
++        case peak = "PK"
++        case lowShelf = "LSC"
++        case highShelf = "HSC"
++
++        var label: String {
++            switch self {
++            case .peak: return "Peak"
++            case .lowShelf: return "Low Shelf"
++            case .highShelf: return "High Shelf"
++            }
++        }
++    }
++
++    var type: FilterType
++    var frequency: Double // Hz
++    var gain: Double      // dB
++    var q: Double
++
++    var frequencyLabel: String {
++        frequency >= 1000
++            ? String(format: "%.1fk", frequency / 1000)
++            : String(format: "%.0f", frequency)
++    }
++}
++
++struct EQPreset: Identifiable {
++    let name: String
++    let preamp: Double
++    let bands: [EQBand]
++    var id: String { name }
++}
++
++/// Realtime-safe value handed to the audio thread. Q is pre-converted to the
++/// bandwidth (octaves) that the NBandEQ AudioUnit expects.
++struct EQSnapshot: Sendable {
++    static let maxBands = 16
++
++    struct Band: Sendable {
++        var filterType: Float // NBandEQ filter type constant
++        var frequency: Float
++        var gain: Float
++        var bandwidth: Float  // octaves
++    }
++
++    var enabled: Bool
++    var preamp: Float
++    var bands: [Band]
++}
++
++// MARK: - Manager
++
++/// Owns the user-facing EQ state. Presets are parametric EQ profiles in the
++/// peqdb.com / AutoEq format (preamp + PK/LSC/HSC filters with Fc, gain, Q);
++/// the bundled ones use oratory1990 measurement data. Any preset from
++/// peqdb.com can be pasted in as text.
++@MainActor
++final class EqualizerManager: ObservableObject {
++    static let shared = EqualizerManager()
++    static let flatPresetName = "Flat"
++    static let customPresetName = "Custom"
++
++    @Published private(set) var isEnabled: Bool
++    @Published private(set) var preamp: Double
++    @Published private(set) var bands: [EQBand]
++    @Published private(set) var selectedPresetName: String
++
++    private static let defaultsKey = "kuro_eq_settings_v1"
++
++    private struct PersistedSettings: Codable {
++        var enabled: Bool
++        var preamp: Double
++        var bands: [EQBand]
++        var presetName: String
++    }
++
++    private init() {
++        if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
++           let saved = try? JSONDecoder().decode(PersistedSettings.self, from: data) {
++            isEnabled = saved.enabled
++            preamp = saved.preamp
++            bands = saved.bands
++            selectedPresetName = saved.presetName
++        } else {
++            isEnabled = false
++            preamp = 0
++            bands = []
++            selectedPresetName = Self.flatPresetName
++        }
++        pushSnapshot()
++    }
++
++    // MARK: Mutations
++
++    func setEnabled(_ enabled: Bool) {
++        isEnabled = enabled
++        persistAndApply()
++    }
++
++    func setPreamp(_ value: Double) {
++        preamp = value.clamped(to: -24...12)
++        if selectedPresetName != Self.customPresetName { selectedPresetName = Self.customPresetName }
++        persistAndApply()
++    }
++
++    func selectPreset(named name: String) {
++        guard let preset = Self.presets.first(where: { $0.name == name }) else {
++            selectedPresetName = Self.customPresetName
++            persistAndApply()
++            return
++        }
++        selectedPresetName = preset.name
++        preamp = preset.preamp
++        bands = preset.bands
++        persistAndApply()
++    }
++
++    func setBandGain(at index: Int, gain: Double) {
++        guard bands.indices.contains(index) else { return }
++        bands[index].gain = gain.clamped(to: -24...24)
++        if selectedPresetName != Self.customPresetName { selectedPresetName = Self.customPresetName }
++        persistAndApply()
++    }
++
++    /// Imports a parametric EQ profile in the text format used by peqdb.com
++    /// and AutoEq exports:
++    ///
++    ///     Preamp: -6.1 dB
++    ///     Filter 1: ON LSC Fc 105 Hz Gain 6.4 dB Q 0.70
++    ///
++    /// Returns false if no filter lines could be parsed.
++    @discardableResult
++    func importParametricEQText(_ text: String) -> Bool {
++        var parsedPreamp: Double = 0
++        var parsedBands: [EQBand] = []
++
++        for line in text.components(separatedBy: .newlines) {
++            let tokens = line.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == ":" }).map(String.init)
++            guard !tokens.isEmpty else { continue }
++
++            if tokens[0].lowercased() == "preamp", tokens.count >= 2, let value = Double(tokens[1]) {
++                parsedPreamp = value
++                continue
++            }
++
++            guard tokens[0].lowercased() == "filter" else { continue }
++
++            var type: EQBand.FilterType?
++            var frequency: Double?
++            var gain: Double?
++            var q: Double?
++
++            var index = 0
++            while index < tokens.count {
++                switch tokens[index].uppercased() {
++                case "PK", "PEQ": type = .peak
++                case "LSC", "LS", "LSQ": type = .lowShelf
++                case "HSC", "HS", "HSQ": type = .highShelf
++                case "FC":
++                    if index + 1 < tokens.count { frequency = Double(tokens[index + 1]) }
++                case "GAIN":
++                    if index + 1 < tokens.count { gain = Double(tokens[index + 1]) }
++                case "Q":
++                    if index + 1 < tokens.count { q = Double(tokens[index + 1]) }
++                default: break
++                }
++                index += 1
++            }
++
++            if let type, let frequency, let gain {
++                parsedBands.append(EQBand(type: type, frequency: frequency, gain: gain, q: q ?? 0.7))
++            }
++        }
++
++        guard !parsedBands.isEmpty else { return false }
++
++        preamp = parsedPreamp
++        bands = Array(parsedBands.prefix(EQSnapshot.maxBands))
++        selectedPresetName = Self.customPresetName
++        persistAndApply()
++        return true
++    }
++
++    var presetNames: [String] {
++        Self.presets.map(\.name)
++    }
++
++    // MARK: Persistence + audio bridge
++
++    private func persistAndApply() {
++        let settings = PersistedSettings(enabled: isEnabled, preamp: preamp, bands: bands, presetName: selectedPresetName)
++        if let data = try? JSONEncoder().encode(settings) {
++            UserDefaults.standard.set(data, forKey: Self.defaultsKey)
++        }
++        pushSnapshot()
++    }
++
++    private func pushSnapshot() {
++        let snapshotBands = bands.prefix(EQSnapshot.maxBands).map { band in
++            EQSnapshot.Band(
++                filterType: band.type.nbandFilterType,
++                frequency: Float(band.frequency.clamped(to: 20...20000)),
++                gain: Float(band.gain.clamped(to: -24...24)),
++                bandwidth: Float(Self.bandwidthInOctaves(q: band.q))
++            )
++        }
++        let snapshot = EQSnapshot(enabled: isEnabled, preamp: Float(preamp), bands: Array(snapshotBands))
++        EQSettingsBridge.shared.update(snapshot)
++    }
++
++    /// RBJ relation between Q and bandwidth in octaves:
++    /// BW = (2 / ln 2) * asinh(1 / (2Q))
++    static func bandwidthInOctaves(q: Double) -> Double {
++        guard q > 0 else { return 5.0 }
++        let bw = (2.0 / log(2.0)) * asinh(1.0 / (2.0 * q))
++        return bw.clamped(to: 0.05...5.0)
++    }
++
++    // MARK: Bundled presets
++    //
++    // Parametric profiles in the peqdb.com / AutoEq format, derived from
++    // oratory1990 measurements. Flat = EQ pass-through.
++
++    static let presets: [EQPreset] = [
++        EQPreset(name: flatPresetName, preamp: 0, bands: []),
++        EQPreset(name: "Sennheiser HD 600", preamp: -6.3, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: 6.5, q: 0.70),
++            EQBand(type: .peak, frequency: 125, gain: -2.7, q: 0.55),
++            EQBand(type: .peak, frequency: 522, gain: 0.7, q: 1.02),
++            EQBand(type: .peak, frequency: 1298, gain: -1.2, q: 2.14),
++            EQBand(type: .peak, frequency: 2166, gain: 0.9, q: 3.32),
++            EQBand(type: .peak, frequency: 3158, gain: -1.8, q: 3.67),
++            EQBand(type: .peak, frequency: 5433, gain: -1.2, q: 5.70),
++            EQBand(type: .peak, frequency: 6639, gain: 2.2, q: 5.82),
++            EQBand(type: .peak, frequency: 8445, gain: 3.3, q: 1.61),
++            EQBand(type: .highShelf, frequency: 10000, gain: -3.1, q: 0.70)
++        ]),
++        EQPreset(name: "Sennheiser HD 650", preamp: -6.1, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: 6.4, q: 0.70),
++            EQBand(type: .peak, frequency: 37, gain: 0.7, q: 3.96),
++            EQBand(type: .peak, frequency: 118, gain: -3.1, q: 0.50),
++            EQBand(type: .peak, frequency: 587, gain: 0.4, q: 1.19),
++            EQBand(type: .peak, frequency: 1227, gain: -1.2, q: 2.53),
++            EQBand(type: .peak, frequency: 2055, gain: 1.2, q: 3.23),
++            EQBand(type: .peak, frequency: 3169, gain: -1.7, q: 3.89),
++            EQBand(type: .peak, frequency: 5332, gain: -1.1, q: 5.75),
++            EQBand(type: .peak, frequency: 8800, gain: 5.1, q: 1.42),
++            EQBand(type: .highShelf, frequency: 10000, gain: -2.1, q: 0.70)
++        ]),
++        EQPreset(name: "Sennheiser HD 560S", preamp: -6.6, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: 9.0, q: 0.70),
++            EQBand(type: .peak, frequency: 54, gain: -5.4, q: 0.48),
++            EQBand(type: .peak, frequency: 491, gain: 0.6, q: 1.23),
++            EQBand(type: .peak, frequency: 1148, gain: -1.5, q: 2.38),
++            EQBand(type: .peak, frequency: 1937, gain: 0.9, q: 3.93),
++            EQBand(type: .peak, frequency: 4502, gain: -1.7, q: 6.00),
++            EQBand(type: .peak, frequency: 5639, gain: -0.9, q: 6.00),
++            EQBand(type: .peak, frequency: 7451, gain: 2.0, q: 3.91),
++            EQBand(type: .peak, frequency: 8983, gain: 4.4, q: 2.63),
++            EQBand(type: .highShelf, frequency: 10000, gain: -3.9, q: 0.70)
++        ]),
++        EQPreset(name: "Sony WH-1000XM4", preamp: -6.1, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: -4.2, q: 0.70),
++            EQBand(type: .peak, frequency: 56, gain: 1.2, q: 1.19),
++            EQBand(type: .peak, frequency: 143, gain: -5.2, q: 1.10),
++            EQBand(type: .peak, frequency: 407, gain: 1.7, q: 3.14),
++            EQBand(type: .peak, frequency: 576, gain: -1.2, q: 3.55),
++            EQBand(type: .peak, frequency: 1007, gain: 1.0, q: 3.41),
++            EQBand(type: .peak, frequency: 2289, gain: 6.1, q: 1.57),
++            EQBand(type: .peak, frequency: 5144, gain: -3.2, q: 6.00),
++            EQBand(type: .peak, frequency: 6715, gain: 3.0, q: 5.99),
++            EQBand(type: .highShelf, frequency: 10000, gain: -1.0, q: 0.70)
++        ]),
++        EQPreset(name: "Sony WH-1000XM5", preamp: -6.2, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: -3.2, q: 0.70),
++            EQBand(type: .peak, frequency: 63, gain: 0.4, q: 2.13),
++            EQBand(type: .peak, frequency: 173, gain: -5.6, q: 0.96),
++            EQBand(type: .peak, frequency: 875, gain: -1.2, q: 4.07),
++            EQBand(type: .peak, frequency: 1197, gain: 1.0, q: 3.28),
++            EQBand(type: .peak, frequency: 1327, gain: 3.3, q: 0.58),
++            EQBand(type: .peak, frequency: 2448, gain: 6.9, q: 2.46),
++            EQBand(type: .peak, frequency: 3028, gain: -5.4, q: 2.03),
++            EQBand(type: .peak, frequency: 6110, gain: -2.3, q: 5.81),
++            EQBand(type: .highShelf, frequency: 10000, gain: 4.9, q: 0.70)
++        ]),
++        EQPreset(name: "AKG K371", preamp: -5.6, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: -2.7, q: 0.70),
++            EQBand(type: .peak, frequency: 67, gain: 3.1, q: 1.41),
++            EQBand(type: .peak, frequency: 182, gain: -2.3, q: 1.23),
++            EQBand(type: .peak, frequency: 524, gain: 0.3, q: 1.66),
++            EQBand(type: .peak, frequency: 1066, gain: -0.8, q: 2.57),
++            EQBand(type: .peak, frequency: 2048, gain: 0.5, q: 4.67),
++            EQBand(type: .peak, frequency: 4038, gain: 5.0, q: 3.60),
++            EQBand(type: .peak, frequency: 4232, gain: 0.9, q: 5.03),
++            EQBand(type: .peak, frequency: 5564, gain: -1.6, q: 3.89),
++            EQBand(type: .highShelf, frequency: 10000, gain: 2.4, q: 0.70)
++        ]),
++        EQPreset(name: "Audio-Technica ATH-M50x", preamp: -3.1, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: 0.6, q: 0.70),
++            EQBand(type: .peak, frequency: 45, gain: -1.1, q: 1.90),
++            EQBand(type: .peak, frequency: 66, gain: 1.4, q: 3.59),
++            EQBand(type: .peak, frequency: 156, gain: -5.2, q: 0.73),
++            EQBand(type: .peak, frequency: 326, gain: 5.3, q: 1.59),
++            EQBand(type: .peak, frequency: 787, gain: -0.5, q: 1.79),
++            EQBand(type: .peak, frequency: 1640, gain: 0.9, q: 3.41),
++            EQBand(type: .peak, frequency: 3483, gain: 2.1, q: 5.82),
++            EQBand(type: .peak, frequency: 7077, gain: 2.8, q: 2.22),
++            EQBand(type: .highShelf, frequency: 10000, gain: -4.1, q: 0.70)
++        ]),
++        EQPreset(name: "7Hz Salnotes Zero", preamp: -2.5, bands: [
++            EQBand(type: .lowShelf, frequency: 105, gain: -0.4, q: 0.70),
++            EQBand(type: .peak, frequency: 65, gain: 1.7, q: 1.11),
++            EQBand(type: .peak, frequency: 186, gain: -1.3, q: 1.35),
++            EQBand(type: .peak, frequency: 857, gain: 0.9, q: 1.64),
++            EQBand(type: .peak, frequency: 1261, gain: -0.7, q: 3.34),
++            EQBand(type: .peak, frequency: 1677, gain: -1.1, q: 1.82),
++            EQBand(type: .peak, frequency: 3316, gain: -0.6, q: 2.50),
++            EQBand(type: .peak, frequency: 7148, gain: 2.5, q: 1.39),
++            EQBand(type: .peak, frequency: 9824, gain: 0.9, q: 1.98),
++            EQBand(type: .highShelf, frequency: 10000, gain: -1.3, q: 0.70)
++        ])
++    ]
++}
++
++private extension EQBand.FilterType {
++    /// NBandEQ AudioUnit filter type constants
++    /// (kAUNBandEQFilterType_Parametric / _LowShelf / _HighShelf).
++    var nbandFilterType: Float {
++        switch self {
++        case .peak: return 0
++        case .lowShelf: return 7
++        case .highShelf: return 8
++        }
++    }
++}
++
++extension Comparable {
++    func clamped(to range: ClosedRange<Self>) -> Self {
++        min(max(self, range.lowerBound), range.upperBound)
++    }
++}
+diff --git a/Sources/KuroPlayer/Models/PlaybackState.swift b/Sources/KuroPlayer/Models/PlaybackState.swift
+index 8c5484c..9a01361 100644
+--- a/Sources/KuroPlayer/Models/PlaybackState.swift
++++ b/Sources/KuroPlayer/Models/PlaybackState.swift
+@@ -22,6 +22,8 @@ struct PlaybackState: Codable {
+     var volume: Float = 0.7
+     var isShuffled: Bool = false
+     var repeatMode: RepeatMode = .off
++    /// Original queue order, kept while shuffle is on so it can be restored.
++    var unshuffledQueue: [Track]? = nil
+ 
+     var nextTrack: Track? {
+         guard !queue.isEmpty else { return nil }
+diff --git a/Sources/KuroPlayer/Models/Playlist.swift b/Sources/KuroPlayer/Models/Playlist.swift
+index 95eff78..4a0a5f1 100644
+--- a/Sources/KuroPlayer/Models/Playlist.swift
++++ b/Sources/KuroPlayer/Models/Playlist.swift
+@@ -8,16 +8,43 @@ struct Playlist: Identifiable, Codable {
+     let providerPlaylistId: String?
+     var createdAt: Date
+ 
+-    init(id: String = UUID().uuidString, name: String, tracks: [Track] = [], 
+-         providerType: MusicProviderType? = nil, providerPlaylistId: String? = nil) {
++    /// Playlist-level artwork (e.g. a SoundCloud set cover or a YouTube
++    /// playlist thumbnail) — not the first track's artwork.
++    var artworkURL: URL?
++    /// Channel/user that owns the playlist on the source service.
++    var uploader: String?
++    /// Original URL the playlist was imported from; used to re-sync.
++    var sourceURL: URL?
++
++    init(id: String = UUID().uuidString, name: String, tracks: [Track] = [],
++         providerType: MusicProviderType? = nil, providerPlaylistId: String? = nil,
++         artworkURL: URL? = nil, uploader: String? = nil, sourceURL: URL? = nil) {
+         self.id = id
+         self.name = name
+         self.tracks = tracks
+         self.providerType = providerType
+         self.providerPlaylistId = providerPlaylistId
+         self.createdAt = Date()
++        self.artworkURL = artworkURL
++        self.uploader = uploader
++        self.sourceURL = sourceURL
+     }
+ 
+     var trackCount: Int { tracks.count }
+     var totalDuration: TimeInterval { tracks.reduce(0) { $0 + $1.duration } }
++
++    var formattedTotalDuration: String {
++        let total = Int(totalDuration)
++        let hours = total / 3600
++        let minutes = (total % 3600) / 60
++        if hours > 0 {
++            return "\(hours) hr \(minutes) min"
++        }
++        return "\(minutes) min"
++    }
++
++    /// Best displayable artwork: playlist cover first, first track as fallback.
++    var displayArtworkURL: URL? {
++        artworkURL ?? tracks.first?.artworkURL
++    }
+ }
+diff --git a/Sources/KuroPlayer/Playback/PlaybackEngine.swift b/Sources/KuroPlayer/Playback/PlaybackEngine.swift
+index 866f804..b9c9b54 100644
+--- a/Sources/KuroPlayer/Playback/PlaybackEngine.swift
++++ b/Sources/KuroPlayer/Playback/PlaybackEngine.swift
+@@ -26,29 +26,29 @@ class PlaybackEngine: PlaybackEngineProtocol {
+             debouncedSave()
+         }
+     }
+-    
+-    private var audioPlayer: AVPlayer?
++
++    /// Single AVPlayer for the app's lifetime; tracks are swapped with
++    /// replaceCurrentItem(with:) per Apple's recommended pattern. This also
++    /// means the periodic time observer is attached exactly once.
++    private let player = AVPlayer()
+     private var timeObserver: Any?
++    private var endObserver: NSObjectProtocol?
++    private var failObserver: NSObjectProtocol?
+     private var scrobbleTracker = ScrobbleTracker()
+     private var saveTask: Task<Void, Never>?
+-    
+-    // Shared instance removed to fix singleton architecture
+-    // Injected via environment object instead
+-    
++    private var prefetchTask: Task<Void, Never>?
++    /// Identifies the most recent play request so a slow stream resolution
++    /// can't clobber a newer one (rapid track switching).
++    private var playRequestID = UUID()
++
+     init() {
+-        setupAudioSession()
++        addPeriodicTimeObserver()
+         // Restore state asynchronously to avoid blocking init
+         Task { @MainActor in
+             self.restoreState()
+         }
+     }
+-    
+-    private func setupAudioSession() {
+-        #if os(macOS)
+-        // macOS doesn't need audio session setup like iOS
+-        #endif
+-    }
+-    
++
+     private func getPersistenceURL() -> URL {
+         let fileManager = FileManager.default
+         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+@@ -83,129 +83,212 @@ class PlaybackEngine: PlaybackEngineProtocol {
+         do {
+             let data = try Data(contentsOf: getPersistenceURL())
+             let restoredState = try JSONDecoder().decode(PlaybackState.self, from: data)
+-            
++
+             // Restore metadata only - don't prepare tracks
+             self.state.currentTrack = restoredState.currentTrack
+             self.state.queue = restoredState.queue
+             self.state.currentIndex = restoredState.currentIndex
+             self.state.volume = restoredState.volume
+             self.state.isShuffled = restoredState.isShuffled
++            self.state.unshuffledQueue = restoredState.unshuffledQueue
+             self.state.repeatMode = restoredState.repeatMode
+             self.state.currentTime = restoredState.currentTime
+-            
++
+             // Always start paused - user can resume manually
+             self.state.status = .stopped
++            player.volume = restoredState.volume
+         } catch {
+             print("Failed to restore playback state: \(error)")
+         }
+     }
+ 
++    // MARK: - Playback
++
+     private func prepareTrack(track: Track) async throws {
+         guard let provider = ProviderRegistry.shared.provider(for: track.providerType) else {
+             throw ProviderError.streamUnavailable
+         }
+-        
+-        let streamURL: URL
+-        // Re-fetch stream URL dynamically to avoid expiration
+-        streamURL = try await provider.getStreamURL(for: track)
+-        
+-        let playerItem = AVPlayerItem(url: streamURL)
+-        audioPlayer = AVPlayer(playerItem: playerItem)
+-        audioPlayer?.volume = state.volume
+-        addPeriodicTimeObserver()
++
++        // Stream URLs are resolved fresh (with a short-lived cache at the
++        // provider layer) so expired links never reach the player.
++        let streamURL = try await provider.getStreamURL(for: track)
++
++        let asset = AVURLAsset(url: streamURL)
++        let playerItem = AVPlayerItem(asset: asset)
++
++        // Route audio through the parametric EQ tap. Attached even while the
++        // EQ is disabled so enabling it mid-track takes effect immediately;
++        // a disabled EQ is all-bands-bypassed (pass-through).
++        if let audioMix = await EQAudioTap.makeAudioMix(for: asset) {
++            playerItem.audioMix = audioMix
++        }
++
++        observeItem(playerItem)
++        player.replaceCurrentItem(with: playerItem)
++        player.volume = state.volume
+     }
+ 
+     func play(track: Track) async throws {
++        let requestID = UUID()
++        playRequestID = requestID
++
+         state.status = .loading
++        state.currentTrack = track
++        state.currentTime = 0
++        // Keep currentIndex in sync when the track lives in the queue.
++        if let queueIndex = state.queue.firstIndex(of: track) {
++            state.currentIndex = queueIndex
++        }
++        updateMediaKeys()
+ 
+-        try await prepareTrack(track: track)
++        do {
++            try await prepareTrack(track: track)
++        } catch {
++            // Never leave the UI stuck on "loading" after a failure.
++            if playRequestID == requestID {
++                state.status = .stopped
++            }
++            throw error
++        }
++
++        // A newer play request superseded this one while we were resolving.
++        guard playRequestID == requestID else { return }
+ 
+-        state.currentTrack = track
+         state.status = .playing
++        player.play()
+ 
+-        audioPlayer?.play()
+-        
+         scrobbleTracker.startTracking(track: track)
+         updateMediaKeys()
++        prefetchNextStreamURL()
+     }
+-    
++
+     func playQueue(at index: Int = 0) async throws {
+-        guard index < state.queue.count else { return }
++        guard index >= 0, index < state.queue.count else { return }
+         state.currentIndex = index
+         try await play(track: state.queue[index])
+     }
+-    
++
+     func moveQueue(from source: IndexSet, to destination: Int) {
++        let current = state.currentTrack
+         state.queue.move(fromOffsets: source, toOffset: destination)
+-        // If the current playing track index shifted, we should ideally update currentIndex,
+-        // but for a simple queue, this is often enough.
++        if let current, let index = state.queue.firstIndex(of: current) {
++            state.currentIndex = index
++        }
+     }
+ 
+     func pause() {
+-        audioPlayer?.pause()
++        player.pause()
+         state.status = .paused
+         scrobbleTracker.pause()
+         updateMediaKeys()
+     }
+-    
++
+     func resume() {
+-        audioPlayer?.play()
++        guard player.currentItem != nil else { return }
++        player.play()
+         state.status = .playing
+         scrobbleTracker.resume()
+         updateMediaKeys()
+     }
+-    
++
+     func togglePlayPause() async throws {
+         switch state.status {
+         case .playing:
+             pause()
+-        case .paused, .stopped:
++        case .paused:
+             resume()
+-            if audioPlayer == nil, let track = state.currentTrack {
+-               try await play(track: track)
++        case .stopped:
++            // After a restart or queue end there's no usable item/position —
++            // start the track fresh; otherwise just resume.
++            if player.currentItem != nil, state.currentTime > 0 {
++                resume()
++            } else if let track = state.currentTrack {
++                try await play(track: track)
+             }
+-        default:
++        case .loading:
+             break
+         }
+     }
+-    
++
+     func next() async throws {
+-        if state.repeatMode == .one {
+-            try await playQueue(at: state.currentIndex)
+-        } else if let nextTrack = state.nextTrack {
+-            state.currentIndex += 1
+-            try await play(track: nextTrack)
++        guard !state.queue.isEmpty else { return }
++
++        let nextIndex = state.currentIndex + 1
++        if nextIndex < state.queue.count {
++            state.currentIndex = nextIndex
++            try await play(track: state.queue[nextIndex])
++        } else if state.repeatMode != .off {
++            state.currentIndex = 0
++            try await play(track: state.queue[0])
++        } else {
++            player.pause()
++            state.status = .stopped
++            state.currentTime = 0
++            updateMediaKeys()
+         }
+     }
+-    
++
+     func previous() async throws {
+         if state.currentTime > 3 {
+             // If more than 3 seconds in, restart current track
+             seek(to: 0)
+-        } else if let prevTrack = state.previousTrack {
+-            state.currentIndex -= 1
+-            try await play(track: prevTrack)
++            return
++        }
++
++        guard !state.queue.isEmpty else { return }
++
++        let prevIndex = state.currentIndex - 1
++        if prevIndex >= 0 {
++            state.currentIndex = prevIndex
++            try await play(track: state.queue[prevIndex])
++        } else if state.repeatMode == .all {
++            state.currentIndex = state.queue.count - 1
++            try await play(track: state.queue[state.currentIndex])
++        } else {
++            seek(to: 0)
+         }
+     }
+-    
++
+     func seek(to time: TimeInterval) {
+         let targetTime = CMTime(seconds: time, preferredTimescale: 600)
+-        audioPlayer?.seek(to: targetTime)
++        player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)
+         state.currentTime = time
++        scrobbleTracker.noteSeek(to: time)
++        updateMediaKeys()
+     }
+-    
++
+     func setVolume(_ volume: Float) {
+         state.volume = volume
+-        audioPlayer?.volume = volume
++        player.volume = volume
+     }
+-    
++
+     func toggleShuffle() {
+-        state.isShuffled.toggle()
+         if state.isShuffled {
++            if let original = state.unshuffledQueue {
++                let current = state.currentTrack
++                state.queue = original
++                if let current, let index = original.firstIndex(of: current) {
++                    state.currentIndex = index
++                } else {
++                    state.currentIndex = 0
++                }
++            }
++            state.unshuffledQueue = nil
++            state.isShuffled = false
++        } else {
++            state.unshuffledQueue = state.queue
++            let current = state.currentTrack
+             state.queue.shuffle()
++            // Keep the playing track at the front so "next" is fresh.
++            if let current, let index = state.queue.firstIndex(of: current) {
++                state.queue.swapAt(0, index)
++            }
++            state.currentIndex = 0
++            state.isShuffled = true
+         }
++        prefetchNextStreamURL()
+     }
+-    
++
+     func cycleRepeatMode() {
+         switch state.repeatMode {
+         case .off:
+@@ -216,16 +299,89 @@ class PlaybackEngine: PlaybackEngineProtocol {
+             state.repeatMode = .off
+         }
+     }
+-    
++
+     func setQueue(_ tracks: [Track]) {
+         state.queue = tracks
+         state.currentIndex = 0
++        state.isShuffled = false
++        state.unshuffledQueue = nil
+     }
+-    
++
+     func addToQueue(_ track: Track) {
+         state.queue.append(track)
+     }
+-    
++
++    func clearQueue() {
++        // Keep the playing track so playback isn't interrupted.
++        if let current = state.currentTrack {
++            state.queue = [current]
++        } else {
++            state.queue = []
++        }
++        state.currentIndex = 0
++        state.isShuffled = false
++        state.unshuffledQueue = nil
++    }
++
++    // MARK: - Item observation
++
++    private func observeItem(_ item: AVPlayerItem) {
++        if let endObserver {
++            NotificationCenter.default.removeObserver(endObserver)
++        }
++        if let failObserver {
++            NotificationCenter.default.removeObserver(failObserver)
++        }
++
++        endObserver = NotificationCenter.default.addObserver(
++            forName: AVPlayerItem.didPlayToEndTimeNotification,
++            object: item,
++            queue: .main
++        ) { [weak self] _ in
++            MainActor.assumeIsolated {
++                self?.handleTrackEnded()
++            }
++        }
++
++        failObserver = NotificationCenter.default.addObserver(
++            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
++            object: item,
++            queue: .main
++        ) { [weak self] _ in
++            MainActor.assumeIsolated {
++                self?.state.status = .stopped
++            }
++        }
++    }
++
++    private func handleTrackEnded() {
++        if state.repeatMode == .one {
++            seek(to: 0)
++            player.play()
++            state.status = .playing
++            if let track = state.currentTrack {
++                scrobbleTracker.startTracking(track: track)
++            }
++            updateMediaKeys()
++        } else {
++            Task {
++                try? await self.next()
++            }
++        }
++    }
++
++    /// Warms the stream-URL cache for the upcoming track so pressing next
++    /// (or auto-advance) starts near-instantly.
++    private func prefetchNextStreamURL() {
++        prefetchTask?.cancel()
++        guard let nextTrack = state.nextTrack, nextTrack.providerType != .local else { return }
++
++        prefetchTask = Task { @MainActor in
++            guard let provider = ProviderRegistry.shared.provider(for: nextTrack.providerType) else { return }
++            _ = try? await provider.getStreamURL(for: nextTrack)
++        }
++    }
++
+     private func updateMediaKeys() {
+         MediaKeyHandler.shared.updateNowPlaying(
+             track: state.currentTrack,
+@@ -236,30 +392,26 @@ class PlaybackEngine: PlaybackEngineProtocol {
+ 
+     private func addPeriodicTimeObserver() {
+         guard timeObserver == nil else { return }
+-        let interval = CMTime(seconds: 1, preferredTimescale: 600)
+-        timeObserver = audioPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+-            guard let self = self else { return }
+-            self.state.currentTime = time.seconds
+-            
+-            if self.state.status == .playing {
+-                self.scrobbleTracker.updateProgress(time: time.seconds)
+-                // Update media keys occasionally to keep elapsed time somewhat accurate
+-                if Int(time.seconds) % 5 == 0 {
+-                    self.updateMediaKeys()
+-                }
++        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
++        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
++            MainActor.assumeIsolated {
++                self?.handleTimeUpdate(time)
+             }
+-            
+-            // Auto-advance when track ends
+-            if let duration = self.state.currentTrack?.duration,
+-               time.seconds >= duration - 1 {
+-                Task {
+-                    try? await self.next()
+-                }
++        }
++    }
++
++    private func handleTimeUpdate(_ time: CMTime) {
++        guard time.isNumeric else { return }
++        state.currentTime = time.seconds
++
++        if state.status == .playing {
++            scrobbleTracker.updateProgress(time: time.seconds)
++            // Update media keys occasionally to keep elapsed time somewhat accurate
++            if Int(time.seconds) % 5 == 0 {
++                updateMediaKeys()
+             }
+         }
+     }
+-    
+-    // Cleanup handled automatically by AVPlayer
+ }
+ 
+ class ScrobbleTracker {
+@@ -269,7 +421,7 @@ class ScrobbleTracker {
+     private var hasScrobbled = false
+     private var scrobbleThreshold: TimeInterval = 0
+     private var isTracking = false
+-    
++
+     func startTracking(track: Track) {
+         currentTrack = track
+         actualListenTime = 0
+@@ -279,7 +431,7 @@ class ScrobbleTracker {
+         // Last.fm: scrobble at 50% or 4 minutes, whichever comes first
+         scrobbleThreshold = min(track.duration * 0.5, 240)
+     }
+-    
++
+     func pause() {
+         isTracking = false
+     }
+@@ -288,16 +440,23 @@ class ScrobbleTracker {
+         isTracking = true
+     }
+ 
++    /// Seeking must not count as listening time in either direction.
++    func noteSeek(to time: TimeInterval) {
++        lastUpdateTime = time
++    }
++
+     func updateProgress(time: TimeInterval) {
+         guard isTracking, let track = currentTrack, !hasScrobbled else {
+             lastUpdateTime = time
+             return
+         }
+ 
+-        let delta = max(0, time - lastUpdateTime)
+-        actualListenTime += delta
++        // Anything above ~2s between ticks is a seek or a stall, not listening.
++        let delta = time - lastUpdateTime
+         lastUpdateTime = time
+-        
++        guard delta > 0, delta < 2 else { return }
++        actualListenTime += delta
++
+         if actualListenTime >= scrobbleThreshold {
+             Task {
+                 await LastFmScrobbler.shared.scrobble(track: track)
+diff --git a/Sources/KuroPlayer/Providers/LocalFileProvider.swift b/Sources/KuroPlayer/Providers/LocalFileProvider.swift
+index aef6139..2d7253a 100644
+--- a/Sources/KuroPlayer/Providers/LocalFileProvider.swift
++++ b/Sources/KuroPlayer/Providers/LocalFileProvider.swift
+@@ -8,6 +8,12 @@ import AVFoundation
+     private let fileManager = FileManager.default
+     private let supportedExtensions = ["mp3", "m4a", "flac", "wav"]
+ 
++    /// Scanning the Music folder reads metadata for every file — far too slow
++    /// to repeat per search, so the result is cached briefly.
++    private var cachedLibrary: [Track]?
++    private var cachedAt: Date = .distantPast
++    private let cacheLifetime: TimeInterval = 300
++
+     func authenticate() async throws {}
+     func logout() async throws {}
+ 
+@@ -52,6 +58,10 @@ import AVFoundation
+     }
+     
+     func getLibrary() async throws -> [Track] {
++        if let cachedLibrary, Date().timeIntervalSince(cachedAt) < cacheLifetime {
++            return cachedLibrary
++        }
++
+         guard let musicDir = fileManager.urls(for: .musicDirectory, in: .userDomainMask).first else {
+             return []
+         }
+@@ -67,6 +77,8 @@ import AVFoundation
+             }
+         }
+ 
++        cachedLibrary = tracks
++        cachedAt = Date()
+         return tracks
+     }
+ 
+diff --git a/Sources/KuroPlayer/Providers/MusicProviderProtocol.swift b/Sources/KuroPlayer/Providers/MusicProviderProtocol.swift
+index 72b6440..681e4c1 100644
+--- a/Sources/KuroPlayer/Providers/MusicProviderProtocol.swift
++++ b/Sources/KuroPlayer/Providers/MusicProviderProtocol.swift
+@@ -3,7 +3,7 @@ import Foundation
+ @MainActor protocol MusicProvider: Sendable {
+     var type: MusicProviderType { get }
+     var isAuthenticated: Bool { get }
+-    
++
+     func authenticate() async throws
+     func logout() async throws
+     func search(query: String) async throws -> [Track]
+@@ -16,6 +16,22 @@ import Foundation
+     func addTrackToPlaylist(playlist: Playlist, track: Track) async throws
+     func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws
+     func deletePlaylist(playlist: Playlist) async throws
++
++    /// Whether this provider can import the playlist at `url`.
++    func canImportPlaylist(url: URL) -> Bool
++    /// Imports a full playlist (metadata + tracks + playlist artwork) from a
++    /// public URL on the provider's service.
++    func importPlaylist(url: URL) async throws -> Playlist
++}
++
++// Default implementations so providers without web playlists (e.g. local
++// files) don't have to stub these.
++extension MusicProvider {
++    func canImportPlaylist(url: URL) -> Bool { false }
++
++    func importPlaylist(url: URL) async throws -> Playlist {
++        throw ProviderError.networkError("\(type.displayName) does not support playlist import")
++    }
+ }
+ 
+ enum ProviderError: Error, LocalizedError {
+@@ -24,6 +40,7 @@ enum ProviderError: Error, LocalizedError {
+     case invalidResponse
+     case trackNotFound
+     case streamUnavailable
++    case playlistNotFound
+ 
+     var errorDescription: String? {
+         switch self {
+@@ -37,6 +54,8 @@ enum ProviderError: Error, LocalizedError {
+             return "Track not found"
+         case .streamUnavailable:
+             return "Stream unavailable"
++        case .playlistNotFound:
++            return "Playlist not found or empty"
+         }
+     }
+ }
+diff --git a/Sources/KuroPlayer/Providers/ProviderRegistry.swift b/Sources/KuroPlayer/Providers/ProviderRegistry.swift
+index c375dff..4c15c31 100644
+--- a/Sources/KuroPlayer/Providers/ProviderRegistry.swift
++++ b/Sources/KuroPlayer/Providers/ProviderRegistry.swift
+@@ -2,48 +2,56 @@ import Foundation
+ 
+ @MainActor class ProviderRegistry {
+     static let shared = ProviderRegistry()
+-    
++
+     private var providers: [MusicProviderType: MusicProvider] = [:]
+-    
++
+     private init() {
+         providers[.youtubeMusic] = YouTubeMusicProvider()
+         providers[.soundcloud] = SoundCloudProvider()
+         providers[.local] = LocalFileProvider()
+     }
+-    
++
+     func provider(for type: MusicProviderType) -> MusicProvider? {
+         return providers[type]
+     }
+-    
++
+     func allProviders() -> [MusicProvider] {
+         return Array(providers.values)
+     }
+-    
++
+     func authenticatedProviders() -> [MusicProvider] {
+         return providers.values.filter { $0.isAuthenticated }
+     }
+-    
++
++    /// First provider that recognizes `url` as an importable playlist
++    /// (SoundCloud set, YouTube/YouTube Music playlist, …).
++    func playlistImportProvider(for url: URL) -> MusicProvider? {
++        return providers.values.first { $0.canImportPlaylist(url: url) }
++    }
++
+     func searchAllProviders(query: String) async -> [Track] {
+         var allTracks: [Track] = []
+-        
++
+         await withTaskGroup(of: (MusicProviderType, [Track]).self) { group in
+             for provider in authenticatedProviders() {
+                 let providerType = provider.type
+                 group.addTask {
+                     do {
+                         return (providerType, try await provider.search(query: query))
++                    } catch is CancellationError {
++                        return (providerType, [])
+                     } catch {
+                         print("Search error for \(providerType): \(error)")
+                         return (providerType, [])
+                     }
+                 }
+             }
+-            
++
+             for await (_, tracks) in group {
+                 allTracks.append(contentsOf: tracks)
+             }
+         }
+-        
++
+         return allTracks
+     }
+ }
+diff --git a/Sources/KuroPlayer/Providers/SoundCloudProvider.swift b/Sources/KuroPlayer/Providers/SoundCloudProvider.swift
+index e3045a6..98f30fb 100644
+--- a/Sources/KuroPlayer/Providers/SoundCloudProvider.swift
++++ b/Sources/KuroPlayer/Providers/SoundCloudProvider.swift
+@@ -3,59 +3,72 @@ import Foundation
+ @MainActor class SoundCloudProvider: MusicProvider {
+     var type: MusicProviderType { .soundcloud }
+     var isAuthenticated: Bool { true }
+-    
+-    private let ytdlpPath = "/opt/homebrew/bin/yt-dlp"
+-    
++
++    /// SoundCloud serves both progressive MP3 and HLS. Progressive starts
++    /// faster in AVPlayer and is required for the parametric EQ tap, so
++    /// prefer it explicitly — this also makes load times consistent with
++    /// the YouTube Music provider.
++    private let audioFormat = "bestaudio[protocol^=http]/bestaudio/best"
++
+     func authenticate() async throws {}
+     func logout() async throws {}
+-    
++
+     func search(query: String) async throws -> [Track] {
+-        let cacheKey = "scsearch_\(query)"
++        let sanitized = query
++            .replacingOccurrences(of: "\n", with: " ")
++            .trimmingCharacters(in: .whitespaces)
++        guard !sanitized.isEmpty else { return [] }
++
++        let cacheKey = "scsearch_\(sanitized)"
+         if let cached = Cache.shared.getObject(forKey: cacheKey, type: [Track].self) {
+             return cached
+         }
+-        
+-        guard FileManager.default.fileExists(atPath: ytdlpPath) else {
+-            throw ProviderError.networkError("yt-dlp not found at \(ytdlpPath)")
+-        }
+-        
+-        let sanitized = query.replacingOccurrences(of: "\"", with: "\\\"")
++
+         let args = [
+             "--flat-playlist",
+             "--dump-json",
+-            "--no-playlist",
+-            "scsearch20:\(sanitized)"
++            "scsearch12:\(sanitized)"
+         ]
+-        
+-        let output = try await runYtDlp(args: args)
+-        let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+-        let tracks = lines.compactMap { parseSearchResult($0) }
++
++        let output = try await YtDlp.run(args, timeout: 25)
++        let tracks = output
++            .components(separatedBy: .newlines)
++            .filter { !$0.isEmpty }
++            .compactMap { track(fromJSONLine: $0) }
++
+         Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
+         return tracks
+     }
+-    
++
+     func getTrack(id: String) async throws -> Track {
+-        let args = ["--dump-json", id]
+-        let output = try await runYtDlp(args: args)
+-        
++        let args = ["--dump-json", "--no-playlist", id]
++        let output = try await YtDlp.run(args, timeout: 30)
++
+         guard let firstLine = output.components(separatedBy: .newlines).first(where: { !$0.isEmpty }),
+-              let track = parseSearchResult(firstLine) else {
++              let track = track(fromJSONLine: firstLine) else {
+             throw ProviderError.trackNotFound
+         }
+         return track
+     }
+-    
++
+     func getStreamURL(for track: Track) async throws -> URL {
+-        let args = ["-f", "bestaudio/best", "--get-url", track.providerTrackId]
+-        let output = try await runYtDlp(args: args)
++        let cacheKey = "stream_\(track.id)"
++        if let cached = Cache.shared.getObject(forKey: cacheKey, type: URL.self) {
++            return cached
++        }
++
++        let args = ["-f", audioFormat, "--no-playlist", "--get-url", track.providerTrackId]
++        let output = try await YtDlp.run(args, timeout: 30)
+         let urlString = output.trimmingCharacters(in: .whitespacesAndNewlines)
+-        
+-        guard let url = URL(string: urlString) else {
++
++        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else {
+             throw ProviderError.streamUnavailable
+         }
++
++        Cache.shared.setObject(url, forKey: cacheKey, ttl: 1200)
+         return url
+     }
+-    
++
+     func getLibrary() async throws -> [Track] { [] }
+     func getPlaylists() async throws -> [Playlist] { [] }
+     func createPlaylist(name: String) async throws -> Playlist { throw ProviderError.networkError("Not supported") }
+@@ -63,109 +76,103 @@ import Foundation
+     func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
+     func deletePlaylist(playlist: Playlist) async throws { throw ProviderError.networkError("Not supported") }
+ 
+-    // MARK: - Thread-safe data buffer
+-    
+-    private final class DataBuffer: @unchecked Sendable {
+-        private var data = Data()
+-        private let lock = NSLock()
+-        
+-        func append(_ newData: Data) {
+-            lock.lock()
+-            data.append(newData)
+-            lock.unlock()
++    // MARK: - Playlist import
++
++    func canImportPlaylist(url: URL) -> Bool {
++        guard let host = url.host?.lowercased() else { return false }
++        return host.contains("soundcloud.com") && url.path.contains("/sets/")
++    }
++
++    func importPlaylist(url: URL) async throws -> Playlist {
++        // Full (non-flat) extraction on purpose: SoundCloud's flat playlist
++        // entries are bare API references without titles, durations or
++        // artwork — which is why imported sets used to display wrong.
++        // One yt-dlp process resolves the whole set, including the
++        // playlist-level artwork.
++        let args = ["-J", url.absoluteString]
++        let output = try await YtDlp.run(args, timeout: 180)
++
++        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
++              let entries = json["entries"] as? [[String: Any]] else {
++            throw ProviderError.playlistNotFound
+         }
+-        
+-        func getData() -> Data {
+-            lock.lock()
+-            defer { lock.unlock() }
+-            return data
++
++        let tracks = entries.compactMap { track(fromFullJSON: $0) }
++        guard !tracks.isEmpty else {
++            throw ProviderError.playlistNotFound
+         }
++
++        let name = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "SoundCloud Set"
++        let playlistId = (json["id"] as? String) ?? (json["id"] as? Int).map(String.init)
++
++        return Playlist(
++            id: "sc-playlist-\(playlistId ?? UUID().uuidString)",
++            name: name,
++            tracks: tracks,
++            providerType: .soundcloud,
++            providerPlaylistId: playlistId,
++            // The set's own cover from SoundCloud, not the first track's.
++            artworkURL: YtDlp.artworkURL(from: json) ?? tracks.first?.artworkURL,
++            uploader: json["uploader"] as? String,
++            sourceURL: url
++        )
+     }
+-    
+-    // MARK: - YT-DLP execution
+-
+-    private func runYtDlp(args: [String]) async throws -> String {
+-        let ytdlp = self.ytdlpPath
+-        return try await withCheckedThrowingContinuation { continuation in
+-            Task.detached {
+-                let process = Process()
+-                process.executableURL = URL(fileURLWithPath: ytdlp)
+-                process.arguments = args
+-
+-                let stdoutPipe = Pipe()
+-                let stderrPipe = Pipe()
+-                process.standardOutput = stdoutPipe
+-                process.standardError = stderrPipe
+-
+-                let outputBuffer = DataBuffer()
+-                let errorBuffer = DataBuffer()
+-
+-                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+-                    let data = handle.availableData
+-                    if !data.isEmpty {
+-                        outputBuffer.append(data)
+-                    }
+-                }
+-
+-                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+-                    let data = handle.availableData
+-                    if !data.isEmpty {
+-                        errorBuffer.append(data)
+-                    }
+-                }
+-
+-                process.terminationHandler = { proc in
+-                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+-                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+-
+-                    if proc.terminationStatus == 0 {
+-                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
+-                        continuation.resume(returning: output)
+-                    } else {
+-                        let err = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
+-                        continuation.resume(throwing: ProviderError.networkError("yt-dlp failed: \(err.prefix(200))"))
+-                    }
+-                }
+-
+-                do {
+-                    try process.run()
+-                } catch {
+-                    continuation.resume(throwing: ProviderError.networkError("Failed to run yt-dlp: \(error.localizedDescription)"))
+-                }
+-            }
++
++    // MARK: - Parsing
++
++    /// Flat search results: `url` is the track's permalink, which yt-dlp can
++    /// resolve directly when streaming.
++    private func track(fromJSONLine line: String) -> Track? {
++        guard let json = YtDlp.jsonObject(from: line) else { return nil }
++
++        guard let id = trackId(from: json),
++              let title = json["title"] as? String,
++              let urlString = json["url"] as? String else {
++            return nil
+         }
++
++        return Track(
++            id: "sc-\(id)",
++            title: title,
++            artist: YtDlp.artist(from: json),
++            album: "",
++            duration: json["duration"] as? Double ?? 0,
++            artworkURL: YtDlp.artworkURL(from: json),
++            streamURL: nil,
++            providerType: .soundcloud,
++            providerTrackId: urlString
++        )
+     }
+-    
+-    private func parseSearchResult(_ jsonString: String) -> Track? {
+-        guard let data = jsonString.data(using: .utf8),
+-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++
++    /// Fully-extracted entries (playlist import): `webpage_url` is the
++    /// canonical permalink.
++    private func track(fromFullJSON json: [String: Any]) -> Track? {
++        guard let id = trackId(from: json),
++              let title = json["title"] as? String else {
+             return nil
+         }
+-        
+-        guard let id = json["id"] as? String,
+-              let title = json["title"] as? String,
+-              let urlString = json["url"] as? String else {
++
++        guard let permalink = (json["webpage_url"] as? String) ?? (json["url"] as? String) else {
+             return nil
+         }
+-        
+-        let artist = json["uploader"] as? String ?? "Unknown Artist"
+-        let duration = json["duration"] as? Double ?? 0
+-        
+-        var artworkURL: URL?
+-        if let thumbnail = json["thumbnail"] as? String {
+-            artworkURL = URL(string: thumbnail)
+-        }
+-        
++
+         return Track(
+             id: "sc-\(id)",
+             title: title,
+-            artist: artist,
++            artist: YtDlp.artist(from: json),
+             album: "",
+-            duration: duration,
+-            artworkURL: artworkURL,
++            duration: json["duration"] as? Double ?? 0,
++            artworkURL: YtDlp.artworkURL(from: json),
+             streamURL: nil,
+             providerType: .soundcloud,
+-            providerTrackId: urlString
++            providerTrackId: permalink
+         )
+     }
++
++    /// SoundCloud IDs come back as strings or numbers depending on the code path.
++    private func trackId(from json: [String: Any]) -> String? {
++        if let id = json["id"] as? String { return id }
++        if let id = json["id"] as? Int { return String(id) }
++        return nil
++    }
+ }
+diff --git a/Sources/KuroPlayer/Providers/YouTubeMusicProvider.swift b/Sources/KuroPlayer/Providers/YouTubeMusicProvider.swift
+index 9615472..589d21b 100644
+--- a/Sources/KuroPlayer/Providers/YouTubeMusicProvider.swift
++++ b/Sources/KuroPlayer/Providers/YouTubeMusicProvider.swift
+@@ -3,74 +3,85 @@ import Foundation
+ @MainActor class YouTubeMusicProvider: MusicProvider {
+     var type: MusicProviderType { .youtubeMusic }
+     var isAuthenticated: Bool { YouTubeMusicAuth.shared.isSignedIn }
+-    
+-    private let ytdlpPath = "/opt/homebrew/bin/yt-dlp"
+-    
++
++    /// Progressive HTTP audio preferred: starts faster than DASH/HLS and is
++    /// required for the parametric EQ tap to attach.
++    private let audioFormat = "bestaudio[ext=m4a][protocol^=http]/bestaudio[protocol^=http]/bestaudio/best"
++
+     func authenticate() async throws {
+         try await YouTubeMusicAuth.shared.authenticate()
+     }
+-    
++
+     func logout() async throws {
+         YouTubeMusicAuth.shared.logout()
+     }
+-    
++
+     func search(query: String) async throws -> [Track] {
+-        let cacheKey = "ytsearch_\(query)"
++        let sanitized = query
++            .replacingOccurrences(of: "\n", with: " ")
++            .trimmingCharacters(in: .whitespaces)
++        guard !sanitized.isEmpty else { return [] }
++
++        let cacheKey = "ytsearch_\(sanitized)"
+         if let cached = Cache.shared.getObject(forKey: cacheKey, type: [Track].self) {
+             return cached
+         }
+ 
+-        guard FileManager.default.fileExists(atPath: ytdlpPath) else {
+-            throw ProviderError.networkError("yt-dlp not found at \(ytdlpPath)")
+-        }
+-        
+-        let sanitized = query.replacingOccurrences(of: "\"", with: "\\\"")
+         let args = [
+             "--flat-playlist",
+             "--dump-json",
+-            "--no-playlist",
+-            "--extractor-args", "youtube:skip=webpage",
+-            "ytsearch20:\(sanitized)"
++            "ytsearch12:\(sanitized)"
+         ]
+-        
+-        let output = try await runYtDlp(args: args)
+-        let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+-        
+-        let tracks = lines.compactMap { parseSearchResult($0) }
++
++        let output = try await YtDlp.run(args, timeout: 25)
++        let tracks = output
++            .components(separatedBy: .newlines)
++            .filter { !$0.isEmpty }
++            .compactMap { track(fromJSONLine: $0) }
++
+         Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
+         return tracks
+     }
+-    
++
+     func getTrack(id: String) async throws -> Track {
+         // id is the YouTube video ID
+-        let args = ["--dump-json", "https://music.youtube.com/watch?v=\(id)"]
+-        let output = try await runYtDlp(args: args)
+-        
++        let args = ["--dump-json", "--no-playlist", "https://music.youtube.com/watch?v=\(id)"]
++        let output = try await YtDlp.run(args, timeout: 30)
++
+         guard let firstLine = output.components(separatedBy: .newlines).first(where: { !$0.isEmpty }),
+-              let track = parseSearchResult(firstLine) else {
++              let track = track(fromJSONLine: firstLine) else {
+             throw ProviderError.trackNotFound
+         }
+-        
++
+         return track
+     }
+-    
++
+     func getStreamURL(for track: Track) async throws -> URL {
++        let cacheKey = "stream_\(track.id)"
++        if let cached = Cache.shared.getObject(forKey: cacheKey, type: URL.self) {
++            return cached
++        }
++
+         let args = [
+-            "-f", "bestaudio[ext=m4a]/bestaudio",
++            "-f", audioFormat,
++            "--no-playlist",
+             "--get-url",
+             "https://music.youtube.com/watch?v=\(track.providerTrackId)"
+         ]
+-        
+-        let output = try await runYtDlp(args: args)
++
++        let output = try await YtDlp.run(args, timeout: 30)
+         let urlString = output.trimmingCharacters(in: .whitespacesAndNewlines)
+-        
+-        guard let url = URL(string: urlString) else {
++
++        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else {
+             throw ProviderError.streamUnavailable
+         }
+-        
++
++        // Google stream URLs live ~6h; 20 minutes is comfortably safe and
++        // makes replays + queue prefetch instant.
++        Cache.shared.setObject(url, forKey: cacheKey, ttl: 1200)
+         return url
+     }
+-    
++
+     func getLibrary() async throws -> [Track] {
+         // Requires Google OAuth with YouTube scope
+         guard isAuthenticated else {
+@@ -79,7 +90,7 @@ import Foundation
+         // TODO: fetch user's liked/uploaded music via YouTube API
+         return []
+     }
+-    
++
+     func getPlaylists() async throws -> [Playlist] {
+         guard isAuthenticated else {
+             throw ProviderError.notAuthenticated
+@@ -87,7 +98,7 @@ import Foundation
+         // TODO: fetch user's YouTube Music playlists
+         return []
+     }
+-    
++
+     func createPlaylist(name: String) async throws -> Playlist {
+         throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+     }
+@@ -104,116 +115,69 @@ import Foundation
+         throw ProviderError.networkError("YouTube API integration for playlists not fully implemented")
+     }
+ 
+-    // MARK: - YT-DLP execution
+-    
+-    private func runYtDlp(args: [String]) async throws -> String {
+-        let ytdlp = self.ytdlpPath
+-        return try await withCheckedThrowingContinuation { continuation in
+-            Task.detached {
+-                let process = Process()
+-                process.executableURL = URL(fileURLWithPath: ytdlp)
+-                process.arguments = args
+-                
+-                let stdoutPipe = Pipe()
+-                let stderrPipe = Pipe()
+-                process.standardOutput = stdoutPipe
+-                process.standardError = stderrPipe
+-                
+-                let outputBuffer = DataBuffer()
+-                let errorBuffer = DataBuffer()
+-                
+-                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+-                    let data = handle.availableData
+-                    if !data.isEmpty {
+-                        outputBuffer.append(data)
+-                    }
+-                }
+-                
+-                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+-                    let data = handle.availableData
+-                    if !data.isEmpty {
+-                        errorBuffer.append(data)
+-                    }
+-                }
+-                
+-                process.terminationHandler = { proc in
+-                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+-                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+-                    
+-                    if proc.terminationStatus == 0 {
+-                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
+-                        continuation.resume(returning: output)
+-                    } else {
+-                        let err = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
+-                        continuation.resume(throwing: ProviderError.networkError("yt-dlp failed: \(err.prefix(200))"))
+-                    }
+-                }
+-                
+-                do {
+-                    try process.run()
+-                } catch {
+-                    continuation.resume(throwing: ProviderError.networkError("Failed to run yt-dlp: \(error.localizedDescription)"))
+-                }
+-            }
+-        }
++    // MARK: - Playlist import
++
++    func canImportPlaylist(url: URL) -> Bool {
++        guard let host = url.host?.lowercased() else { return false }
++        let isYouTubeHost = host.contains("youtube.com") || host == "youtu.be"
++        guard isYouTubeHost else { return false }
++        if url.path.contains("/playlist") { return true }
++        let query = url.query ?? ""
++        return query.contains("list=")
+     }
+-    
+-    private final class DataBuffer: @unchecked Sendable {
+-        private var data = Data()
+-        private let lock = NSLock()
+-        
+-        func append(_ newData: Data) {
+-            lock.lock()
+-            data.append(newData)
+-            lock.unlock()
++
++    func importPlaylist(url: URL) async throws -> Playlist {
++        // Flat extraction is fast and YouTube's flat entries carry full
++        // metadata (title, duration, uploader, thumbnails) — one HTTP round
++        // trip for the whole playlist.
++        let args = ["-J", "--flat-playlist", url.absoluteString]
++        let output = try await YtDlp.run(args, timeout: 90)
++
++        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
++              let entries = json["entries"] as? [[String: Any]] else {
++            throw ProviderError.playlistNotFound
+         }
+-        
+-        func getData() -> Data {
+-            lock.lock()
+-            defer { lock.unlock() }
+-            return data
++
++        let tracks = entries.compactMap { track(fromJSON: $0) }
++        guard !tracks.isEmpty else {
++            throw ProviderError.playlistNotFound
+         }
++
++        let name = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "YouTube Playlist"
++        let playlistId = json["id"] as? String
++
++        return Playlist(
++            id: "youtube-playlist-\(playlistId ?? UUID().uuidString)",
++            name: name,
++            tracks: tracks,
++            providerType: .youtubeMusic,
++            providerPlaylistId: playlistId,
++            artworkURL: YtDlp.artworkURL(from: json) ?? tracks.first?.artworkURL,
++            uploader: (json["uploader"] as? String) ?? (json["channel"] as? String),
++            sourceURL: url
++        )
+     }
+-    
+-    private func parseSearchResult(_ jsonString: String) -> Track? {
+-        guard let data = jsonString.data(using: .utf8),
+-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+-            return nil
+-        }
+-        
++
++    // MARK: - Parsing
++
++    private func track(fromJSONLine line: String) -> Track? {
++        guard let json = YtDlp.jsonObject(from: line) else { return nil }
++        return track(fromJSON: json)
++    }
++
++    private func track(fromJSON json: [String: Any]) -> Track? {
+         guard let id = json["id"] as? String,
+               let title = json["title"] as? String else {
+             return nil
+         }
+-        
+-        let artist: String
+-        if let uploader = json["uploader"] as? String, !uploader.isEmpty {
+-            artist = uploader
+-        } else if let channel = json["channel"] as? String, !channel.isEmpty {
+-            artist = channel
+-        } else {
+-            artist = "Unknown Artist"
+-        }
+-        
+-        let album = json["album"] as? String ?? ""
+-        let duration = json["duration"] as? Double ?? 0
+-        
+-        var artworkURL: URL?
+-        if let thumbnails = json["thumbnails"] as? [[String: Any]],
+-           let lastThumb = thumbnails.last,
+-           let urlString = lastThumb["url"] as? String {
+-            artworkURL = URL(string: urlString)
+-        } else if let thumbnail = json["thumbnail"] as? String {
+-            artworkURL = URL(string: thumbnail)
+-        }
+-        
++
+         return Track(
+             id: "youtube-\(id)",
+             title: title,
+-            artist: artist,
+-            album: album,
+-            duration: duration,
+-            artworkURL: artworkURL,
++            artist: YtDlp.artist(from: json),
++            album: json["album"] as? String ?? "",
++            duration: json["duration"] as? Double ?? 0,
++            artworkURL: YtDlp.artworkURL(from: json),
+             streamURL: nil,
+             providerType: .youtubeMusic,
+             providerTrackId: id
+diff --git a/Sources/KuroPlayer/UI/Components/KuroSlider.swift b/Sources/KuroPlayer/UI/Components/KuroSlider.swift
+new file mode 100644
+index 0000000..5e6c11d
+--- /dev/null
++++ b/Sources/KuroPlayer/UI/Components/KuroSlider.swift
+@@ -0,0 +1,40 @@
++import SwiftUI
++
++/// Horizontal capsule slider matching the Liquid Glass theme. Replaces the
++/// stock AppKit slider, which clashed with the rest of the design.
++/// Value is normalized 0...1; drag anywhere on the track to set it.
++struct KuroSlider: View {
++    @Binding var value: Double
++    var onEditingEnded: (() -> Void)? = nil
++
++    @EnvironmentObject private var theme: ThemeManager
++
++    private let trackHeight: CGFloat = 5
++
++    var body: some View {
++        GeometryReader { geometry in
++            let width = max(geometry.size.width, 1)
++            ZStack(alignment: .leading) {
++                Capsule()
++                    .fill(.quaternary)
++                    .frame(height: trackHeight)
++
++                Capsule()
++                    .fill(theme.accent)
++                    .frame(width: max(trackHeight, width * value.clamped(to: 0...1)), height: trackHeight)
++            }
++            .frame(maxHeight: .infinity, alignment: .leading)
++            .contentShape(Rectangle())
++            .gesture(
++                DragGesture(minimumDistance: 0)
++                    .onChanged { gesture in
++                        value = (gesture.location.x / width).clamped(to: 0...1)
++                    }
++                    .onEnded { _ in
++                        onEditingEnded?()
++                    }
++            )
++        }
++        .frame(height: 16)
++    }
++}
+diff --git a/Sources/KuroPlayer/UI/Components/NowPlayingIndicator.swift b/Sources/KuroPlayer/UI/Components/NowPlayingIndicator.swift
+index 3ece192..e60e78b 100644
+--- a/Sources/KuroPlayer/UI/Components/NowPlayingIndicator.swift
++++ b/Sources/KuroPlayer/UI/Components/NowPlayingIndicator.swift
+@@ -2,24 +2,26 @@ import SwiftUI
+ 
+ struct NowPlayingIndicator: View {
+     let isPlaying: Bool
+-    
++
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         TimelineView(.animation) { timeline in
+             let t = timeline.date.timeIntervalSinceReferenceDate
+             HStack(spacing: 2) {
+                 ForEach(0..<3) { index in
+                     RoundedRectangle(cornerRadius: 1)
+-                        .fill(KurokulaTheme.accent)
++                        .fill(theme.accent)
+                         .frame(width: 2, height: barHeight(for: index, time: t))
+                 }
+             }
+         }
+         .frame(maxWidth: .infinity, maxHeight: .infinity)
+     }
+-    
++
+     private func barHeight(for index: Int, time: TimeInterval) -> CGFloat {
+         guard isPlaying else { return 4 }
+-        
++
+         let base: CGFloat = 4
+         let amplitude: CGFloat = 10
+         let offset = CGFloat(index) * .pi / 3
+diff --git a/Sources/KuroPlayer/UI/Theme/ThemeManager.swift b/Sources/KuroPlayer/UI/Theme/ThemeManager.swift
+new file mode 100644
+index 0000000..d207c18
+--- /dev/null
++++ b/Sources/KuroPlayer/UI/Theme/ThemeManager.swift
+@@ -0,0 +1,107 @@
++import SwiftUI
++
++/// App-wide appearance state.
++///
++/// Two modes:
++/// - `.system` — fully follows macOS: light/dark from the system setting and
++///   the user's chosen system accent color.
++/// - `.kurokula` — the original KuroPlayer look: forced dark with the
++///   Kurokula palette. This is the default, and once switched away it can
++///   only be brought back through the hidden switch in Settings → About
++///   (click the version number seven times).
++@MainActor
++final class ThemeManager: ObservableObject {
++    static let shared = ThemeManager()
++
++    enum Mode: String, CaseIterable, Identifiable {
++        case system
++        case kurokula
++
++        var id: String { rawValue }
++
++        var displayName: String {
++            switch self {
++            case .system: return "System"
++            case .kurokula: return "Kurokula"
++            }
++        }
++    }
++
++    @Published private(set) var mode: Mode
++    @Published private(set) var kurokulaUnlocked: Bool
++    /// Set briefly after the easter egg fires, so Settings can show a wink.
++    @Published private(set) var justUnlocked = false
++
++    private var secretTapCount = 0
++    private static let modeKey = "kuro_theme_mode"
++    private static let unlockedKey = "kuro_kurokula_unlocked"
++    private static let tapsToUnlock = 7
++
++    private init() {
++        let savedMode = UserDefaults.standard.string(forKey: Self.modeKey).flatMap(Mode.init(rawValue:))
++        // Kurokula is the shipped default.
++        mode = savedMode ?? .kurokula
++        kurokulaUnlocked = UserDefaults.standard.bool(forKey: Self.unlockedKey)
++    }
++
++    func setMode(_ newMode: Mode) {
++        mode = newMode
++        UserDefaults.standard.set(newMode.rawValue, forKey: Self.modeKey)
++    }
++
++    /// Modes offered in Settings. Kurokula only appears while it's active or
++    /// after it has been unlocked via the easter egg.
++    var availableModes: [Mode] {
++        if kurokulaUnlocked || mode == .kurokula {
++            return [.system, .kurokula]
++        }
++        return [.system]
++    }
++
++    /// Easter egg: seven clicks on the version number in Settings → About
++    /// permanently unlocks the Kurokula scheme switch.
++    func registerSecretTap() {
++        guard !kurokulaUnlocked else { return }
++        secretTapCount += 1
++        if secretTapCount >= Self.tapsToUnlock {
++            kurokulaUnlocked = true
++            justUnlocked = true
++            UserDefaults.standard.set(true, forKey: Self.unlockedKey)
++            Task { @MainActor in
++                try? await Task.sleep(nanoseconds: 4_000_000_000)
++                self.justUnlocked = false
++            }
++        }
++    }
++
++    // MARK: - Palette
++
++    /// nil = follow the system light/dark setting.
++    var colorScheme: ColorScheme? {
++        mode == .kurokula ? .dark : nil
++    }
++
++    /// Primary accent. In system mode this is the accent color the user
++    /// picked in System Settings → Appearance.
++    var accent: Color {
++        mode == .kurokula ? KurokulaTheme.accent : .accentColor
++    }
++
++    /// Secondary highlight (neon yellow in Kurokula).
++    var secondaryAccent: Color {
++        mode == .kurokula ? KurokulaTheme.secondary : .accentColor
++    }
++
++    var success: Color {
++        mode == .kurokula ? KurokulaTheme.success : .green
++    }
++
++    var error: Color {
++        mode == .kurokula ? KurokulaTheme.error : .red
++    }
++
++    /// Base background used in hero gradients.
++    var heroBackground: Color {
++        mode == .kurokula ? KurokulaTheme.background : Color(nsColor: .windowBackgroundColor)
++    }
++}
+diff --git a/Sources/KuroPlayer/UI/Views/ContentView.swift b/Sources/KuroPlayer/UI/Views/ContentView.swift
+index e1a8aa8..7ac1858 100644
+--- a/Sources/KuroPlayer/UI/Views/ContentView.swift
++++ b/Sources/KuroPlayer/UI/Views/ContentView.swift
+@@ -3,7 +3,8 @@ import SwiftUI
+ struct ContentView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+     @StateObject private var authManager = AuthManager.shared
+-    
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         NavigationSplitView {
+             SidebarView()
+@@ -20,16 +21,20 @@ struct ContentView: View {
+                         SearchView()
+                     case .library:
+                         LibraryView()
++                    case .playlists:
++                        PlaylistsView()
+                     case .queue:
+                         QueueView()
+                     case .settings:
+                         SettingsView()
++                    case .playlist(let playlistID):
++                        PlaylistDetailView(playlistID: playlistID)
+                     }
+                 }
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                 .backgroundExtensionEffect()
+                 .animation(.smooth(duration: 0.3), value: viewModel.selectedView)
+-                
++
+                 // Player bar
+                 PlayerBarView()
+                     .environmentObject(viewModel)
+@@ -38,6 +43,8 @@ struct ContentView: View {
+         .navigationSplitViewStyle(.balanced)
+         .environmentObject(viewModel)
+         .frame(minWidth: 1000, minHeight: 600)
++        .preferredColorScheme(theme.colorScheme)
++        .tint(theme.accent)
+         .onAppear {
+             Task {
+                 await viewModel.loadLibrary()
+@@ -65,7 +72,7 @@ struct ContentView: View {
+ struct ErrorBanner: View {
+     let message: String
+     let onDismiss: () -> Void
+-    
++
+     var body: some View {
+         HStack {
+             Image(systemName: "exclamationmark.triangle.fill")
+@@ -81,7 +88,6 @@ struct ErrorBanner: View {
+         }
+         .padding()
+         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
+-        .padding(.horizontal, 20)
+         .onAppear {
+             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                 withAnimation(.smooth(duration: 0.25)) {
+@@ -94,19 +100,20 @@ struct ErrorBanner: View {
+ 
+ struct HomeView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         ScrollView {
+             VStack(alignment: .leading, spacing: 32) {
+                 // Hero section with background extension
+                 ZStack(alignment: .bottomLeading) {
+                     LinearGradient(
+-                        colors: [KurokulaTheme.accent.opacity(0.3), KurokulaTheme.background],
++                        colors: [theme.accent.opacity(0.3), theme.heroBackground],
+                         startPoint: .top,
+                         endPoint: .bottom
+                     )
+                     .frame(height: 200)
+-                    
++
+                     VStack(alignment: .leading, spacing: 8) {
+                         Text("Welcome back")
+                             .font(.title2)
+@@ -117,34 +124,34 @@ struct HomeView: View {
+                     .padding(24)
+                 }
+                 .backgroundExtensionEffect()
+-                
++
+                 // Quick actions with glass
+                 VStack(alignment: .leading, spacing: 16) {
+                     Text("Quick Start")
+                         .font(.title2.bold())
+-                    
++
+                     GlassEffectContainer(spacing: 16) {
+                         HStack(spacing: 16) {
+-                            QuickActionButton(icon: "magnifyingglass", title: "Search", tint: KurokulaTheme.accent) {
++                            QuickActionButton(icon: "magnifyingglass", title: "Search", tint: theme.accent) {
+                                 viewModel.selectedView = .search
+                             }
+-                            QuickActionButton(icon: "music.note.list", title: "Library", tint: KurokulaTheme.secondary) {
+-                                viewModel.selectedView = .library
++                            QuickActionButton(icon: "square.grid.2x2", title: "Playlists", tint: theme.secondaryAccent) {
++                                viewModel.selectedView = .playlists
+                             }
+-                            QuickActionButton(icon: "list.bullet", title: "Queue", tint: KurokulaTheme.success) {
+-                                viewModel.selectedView = .queue
++                            QuickActionButton(icon: "music.note.list", title: "Library", tint: theme.success) {
++                                viewModel.selectedView = .library
+                             }
+                         }
+                     }
+                 }
+                 .padding(.horizontal, 24)
+-                
++
+                 // Recently played
+                 if !viewModel.libraryTracks.isEmpty {
+                     VStack(alignment: .leading, spacing: 16) {
+                         Text("From Your Library")
+                             .font(.title2.bold())
+-                        
++
+                         ScrollView(.horizontal, showsIndicators: false) {
+                             HStack(spacing: 16) {
+                                 ForEach(viewModel.libraryTracks.prefix(10)) { track in
+@@ -155,12 +162,12 @@ struct HomeView: View {
+                         }
+                     }
+                 }
+-                
++
+                 // Services status
+                 VStack(alignment: .leading, spacing: 16) {
+                     Text("Connected Services")
+                         .font(.title2.bold())
+-                    
++
+                     GlassEffectContainer(spacing: 12) {
+                         VStack(spacing: 12) {
+                             ServiceStatusCard(
+@@ -185,6 +192,7 @@ struct HomeView: View {
+                 .padding(.bottom, 100) // Space for player bar
+             }
+         }
++        .scrollIndicators(.hidden)
+     }
+ }
+ 
+@@ -193,7 +201,7 @@ struct QuickActionButton: View {
+     let title: String
+     let tint: Color
+     let action: () -> Void
+-    
++
+     var body: some View {
+         Button(action: action) {
+             VStack(spacing: 12) {
+@@ -215,7 +223,7 @@ struct QuickActionButton: View {
+ struct TrackCard: View {
+     let track: Track
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++
+     var body: some View {
+         Button(action: {
+             viewModel.play(track: track)
+@@ -236,7 +244,7 @@ struct TrackCard: View {
+                     }
+                     .frame(width: 160, height: 160)
+                     .clipShape(.rect(cornerRadius: 12))
+-                    
++
+                     if viewModel.currentTrack?.id == track.id {
+                         NowPlayingIndicator(isPlaying: viewModel.isPlaying)
+                             .frame(width: 160, height: 160)
+@@ -244,7 +252,7 @@ struct TrackCard: View {
+                             .clipShape(.rect(cornerRadius: 12))
+                     }
+                 }
+-                
++
+                 VStack(alignment: .leading, spacing: 2) {
+                     Text(track.title)
+                         .font(.headline)
+@@ -266,28 +274,29 @@ struct ServiceStatusCard: View {
+     let name: String
+     let icon: String
+     let isConnected: Bool
+-    
++
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         HStack(spacing: 16) {
+             Image(systemName: icon)
+                 .font(.title2)
+-                .foregroundStyle(isConnected ? KurokulaTheme.success : .secondary)
++                .foregroundStyle(isConnected ? theme.success : .secondary)
+                 .frame(width: 32)
+-            
++
+             VStack(alignment: .leading, spacing: 2) {
+                 Text(name)
+                     .font(.headline)
+                 Text(isConnected ? "Connected" : "Not connected")
+                     .font(.caption)
+-                    .foregroundColor(isConnected ? KurokulaTheme.success : .secondary)
++                    .foregroundColor(isConnected ? theme.success : .secondary)
+             }
+-            
++
+             Spacer()
+-            
++
+             Circle()
+-                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
++                .fill(isConnected ? theme.success : .secondary.opacity(0.3))
+                 .frame(width: 8, height: 8)
+-                .glassEffect(.regular, in: .circle)
+         }
+         .padding()
+         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
+diff --git a/Sources/KuroPlayer/UI/Views/EqualizerSettingsView.swift b/Sources/KuroPlayer/UI/Views/EqualizerSettingsView.swift
+new file mode 100644
+index 0000000..6dec2b7
+--- /dev/null
++++ b/Sources/KuroPlayer/UI/Views/EqualizerSettingsView.swift
+@@ -0,0 +1,159 @@
++import SwiftUI
++import AppKit
++
++/// Settings section for the parametric EQ. Presets use the peqdb.com /
++/// AutoEq parametric format; any preset can be copied from peqdb.com and
++/// pasted in directly.
++struct EqualizerSettingsSection: View {
++    @StateObject private var eq = EqualizerManager.shared
++    @EnvironmentObject var viewModel: PlayerViewModel
++    @EnvironmentObject private var theme: ThemeManager
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 16) {
++            Text("Equalizer")
++                .font(.title2.bold())
++
++            VStack(alignment: .leading, spacing: 16) {
++                Toggle(isOn: enabledBinding) {
++                    VStack(alignment: .leading, spacing: 2) {
++                        Text("Parametric EQ")
++                            .font(.headline)
++                        Text("Applied to the current track in real time")
++                            .font(.caption)
++                            .foregroundStyle(.secondary)
++                    }
++                }
++                .toggleStyle(.switch)
++
++                Divider()
++
++                // Preset picker
++                HStack {
++                    Text("Headphone preset")
++                        .font(.body)
++                    Spacer()
++                    Picker("", selection: presetBinding) {
++                        ForEach(eq.presetNames, id: \.self) { name in
++                            Text(name).tag(name)
++                        }
++                        Text(EqualizerManager.customPresetName)
++                            .tag(EqualizerManager.customPresetName)
++                    }
++                    .labelsHidden()
++                    .frame(maxWidth: 280)
++                }
++
++                // Preamp
++                HStack(spacing: 12) {
++                    Text("Preamp")
++                        .font(.caption)
++                        .foregroundStyle(.secondary)
++                        .frame(width: 64, alignment: .leading)
++
++                    KuroSlider(value: preampBinding)
++
++                    Text(String(format: "%+.1f dB", eq.preamp))
++                        .font(.caption.monospaced())
++                        .foregroundStyle(.secondary)
++                        .frame(width: 64, alignment: .trailing)
++                }
++                .disabled(!eq.isEnabled)
++                .opacity(eq.isEnabled ? 1 : 0.5)
++
++                // Bands
++                if !eq.bands.isEmpty {
++                    VStack(spacing: 8) {
++                        ForEach(Array(eq.bands.enumerated()), id: \.offset) { index, band in
++                            HStack(spacing: 12) {
++                                VStack(alignment: .leading, spacing: 0) {
++                                    Text("\(band.frequencyLabel) Hz")
++                                        .font(.caption.monospaced())
++                                    Text(band.type.rawValue)
++                                        .font(.caption2)
++                                        .foregroundStyle(.secondary)
++                                }
++                                .frame(width: 64, alignment: .leading)
++
++                                KuroSlider(value: bandGainBinding(at: index))
++
++                                Text(String(format: "%+.1f dB", band.gain))
++                                    .font(.caption.monospaced())
++                                    .foregroundStyle(.secondary)
++                                    .frame(width: 64, alignment: .trailing)
++                            }
++                        }
++                    }
++                    .disabled(!eq.isEnabled)
++                    .opacity(eq.isEnabled ? 1 : 0.5)
++                }
++
++                Divider()
++
++                // peqdb.com integration
++                HStack(spacing: 12) {
++                    Button {
++                        pastePreset()
++                    } label: {
++                        Label("Paste Preset", systemImage: "doc.on.clipboard")
++                    }
++                    .buttonStyle(.glass)
++                    .help("Paste a parametric EQ profile copied from peqdb.com or AutoEq")
++
++                    Spacer()
++
++                    Link("Find presets for your headphones at peqdb.com",
++                         destination: URL(string: "https://peqdb.com")!)
++                        .font(.caption)
++                }
++            }
++            .padding()
++            .glassEffect(.regular, in: .rect(cornerRadius: 12))
++        }
++    }
++
++    // MARK: - Bindings
++
++    private var enabledBinding: Binding<Bool> {
++        Binding(
++            get: { eq.isEnabled },
++            set: { eq.setEnabled($0) }
++        )
++    }
++
++    private var presetBinding: Binding<String> {
++        Binding(
++            get: { eq.selectedPresetName },
++            set: { eq.selectPreset(named: $0) }
++        )
++    }
++
++    /// Preamp mapped from -24...+12 dB to the slider's 0...1.
++    private var preampBinding: Binding<Double> {
++        Binding(
++            get: { (eq.preamp + 24) / 36 },
++            set: { eq.setPreamp($0 * 36 - 24) }
++        )
++    }
++
++    /// Band gain mapped from -12...+12 dB to the slider's 0...1.
++    private func bandGainBinding(at index: Int) -> Binding<Double> {
++        Binding(
++            get: {
++                guard eq.bands.indices.contains(index) else { return 0.5 }
++                return ((eq.bands[index].gain + 12) / 24).clamped(to: 0...1)
++            },
++            set: { eq.setBandGain(at: index, gain: $0 * 24 - 12) }
++        )
++    }
++
++    private func pastePreset() {
++        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
++            viewModel.errorMessage = "Clipboard is empty."
++            return
++        }
++        if !eq.importParametricEQText(text) {
++            viewModel.errorMessage = "Couldn't read a parametric EQ profile from the clipboard. Copy the preset text from peqdb.com (Preamp + Filter lines) and try again."
++        }
++    }
++}
+diff --git a/Sources/KuroPlayer/UI/Views/LibraryView.swift b/Sources/KuroPlayer/UI/Views/LibraryView.swift
+index 7d2cd21..af247c1 100644
+--- a/Sources/KuroPlayer/UI/Views/LibraryView.swift
++++ b/Sources/KuroPlayer/UI/Views/LibraryView.swift
+@@ -42,10 +42,9 @@ struct LibraryView: View {
+                 ScrollView {
+                     GlassEffectContainer(spacing: 2) {
+                         LazyVStack(spacing: 2) {
+-                            ForEach(viewModel.libraryTracks) { track in
++                            ForEach(Array(viewModel.libraryTracks.enumerated()), id: \.element.id) { index, track in
+                                 Button(action: {
+-                                    viewModel.setQueue(viewModel.libraryTracks)
+-                                    viewModel.play(track: track)
++                                    viewModel.playFromList(viewModel.libraryTracks, startingAt: index)
+                                 }) {
+                                     TrackRowContent(track: track)
+                                 }
+@@ -55,11 +54,17 @@ struct LibraryView: View {
+                                     in: .rect(cornerRadius: 8)
+                                 )
+                                 .glassEffectID(track.id, in: glassNamespace)
++                                .contextMenu {
++                                    Button("Add to Queue") {
++                                        viewModel.addToQueue(track)
++                                    }
++                                }
+                             }
+                         }
+                         .padding(.horizontal, 24)
+                     }
+                 }
++                .scrollIndicators(.hidden)
+             }
+         }
+     }
+diff --git a/Sources/KuroPlayer/UI/Views/PlayerBarView.swift b/Sources/KuroPlayer/UI/Views/PlayerBarView.swift
+index dfe9d00..9652267 100644
+--- a/Sources/KuroPlayer/UI/Views/PlayerBarView.swift
++++ b/Sources/KuroPlayer/UI/Views/PlayerBarView.swift
+@@ -2,29 +2,31 @@ import SwiftUI
+ 
+ struct PlayerBarView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+-        VStack(spacing: 12) {
+-            // Progress bar
+-            if let track = viewModel.currentTrack {
+-                GeometryReader { geometry in
+-                    ZStack(alignment: .leading) {
+-                        Capsule()
+-                            .fill(.secondary.opacity(0.3))
+-                            .frame(height: 4)
+-                        
+-                        Capsule()
+-                            .fill(KurokulaTheme.accent)
+-                            .frame(width: geometry.size.width * progress, height: 4)
++        VStack(spacing: 10) {
++            // Scrubbable progress row: elapsed — bar — total
++            if viewModel.currentTrack != nil {
++                HStack(spacing: 10) {
++                    Text(formatTime(displayedTime))
++                        .font(.caption.monospaced())
++                        .foregroundStyle(.secondary)
++                        .frame(width: 40, alignment: .trailing)
++
++                    KuroSlider(value: progressBinding) {
++                        commitScrub()
+                     }
+-                    .glassEffect(.regular, in: .capsule)
+-                }
+-                .frame(height: 4)
+-                .onTapGesture { location in
+-                    // TODO: Add scrubbing
++                    .disabled(viewModel.isLoadingTrack)
++                    .opacity(viewModel.isLoadingTrack ? 0.5 : 1)
++
++                    Text(formatTime(viewModel.duration))
++                        .font(.caption.monospaced())
++                        .foregroundStyle(.secondary)
++                        .frame(width: 40, alignment: .leading)
+                 }
+             }
+-            
++
+             // Controls
+             HStack(spacing: 20) {
+                 // Track info
+@@ -43,7 +45,7 @@ struct PlayerBarView: View {
+                         }
+                         .frame(width: 48, height: 48)
+                         .clipShape(.rect(cornerRadius: 8))
+-                        
++
+                         VStack(alignment: .leading, spacing: 2) {
+                             Text(track.title)
+                                 .font(.headline)
+@@ -60,58 +62,68 @@ struct PlayerBarView: View {
+                         .foregroundColor(.secondary)
+                         .frame(width: 250, alignment: .leading)
+                 }
+-                
++
+                 Spacer()
+-                
++
+                 // Playback controls
+-                HStack(spacing: 16) {
++                HStack(spacing: 14) {
++                    Button(action: { viewModel.toggleShuffle() }) {
++                        Image(systemName: "shuffle")
++                            .font(.body)
++                            .foregroundStyle(viewModel.isShuffled ? theme.accent : .secondary)
++                    }
++                    .buttonStyle(.glass)
++                    .disabled(viewModel.queue.isEmpty)
++                    .help("Shuffle")
++
+                     Button(action: { viewModel.previous() }) {
+                         Image(systemName: "backward.fill")
+                             .font(.title2)
+                     }
+                     .buttonStyle(.glass)
+                     .disabled(viewModel.currentTrack == nil)
+-                    
++
+                     Button(action: { viewModel.togglePlayPause() }) {
+-                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+-                            .font(.title)
++                        ZStack {
++                            if viewModel.isLoadingTrack {
++                                ProgressView()
++                                    .controlSize(.small)
++                            } else {
++                                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
++                                    .font(.title)
++                            }
++                        }
++                        .frame(width: 28, height: 28)
+                     }
+                     .buttonStyle(.glassProminent)
+-                    .disabled(viewModel.currentTrack == nil)
+-                    
++                    .disabled(viewModel.currentTrack == nil || viewModel.isLoadingTrack)
++
+                     Button(action: { viewModel.next() }) {
+                         Image(systemName: "forward.fill")
+                             .font(.title2)
+                     }
+                     .buttonStyle(.glass)
+                     .disabled(viewModel.currentTrack == nil)
++
++                    Button(action: { viewModel.cycleRepeatMode() }) {
++                        Image(systemName: viewModel.repeatMode == .one ? "repeat.1" : "repeat")
++                            .font(.body)
++                            .foregroundStyle(viewModel.repeatMode == .off ? .secondary : theme.accent)
++                    }
++                    .buttonStyle(.glass)
++                    .help("Repeat")
+                 }
+-                
++
+                 Spacer()
+-                
+-                // Volume and time
+-                HStack(spacing: 12) {
+-                    Image(systemName: "speaker.fill")
++
++                // Volume
++                HStack(spacing: 10) {
++                    Image(systemName: volumeIcon)
+                         .foregroundColor(.secondary)
+-                    
+-                    Slider(value: $viewModel.sliderVolume, in: 0...1)
+-                        .onChange(of: viewModel.sliderVolume) { _, newValue in
+-                            viewModel.setVolume(Float(newValue))
+-                        }
+-                        .frame(width: 100)
+-                    
+-                    if let track = viewModel.currentTrack {
+-                        Text(formatTime(viewModel.currentTime))
+-                            .font(.caption.monospaced())
+-                            .foregroundColor(.secondary)
+-                        
+-                        Text("/")
+-                            .foregroundColor(.secondary)
+-                        
+-                        Text(formatTime(track.duration))
+-                            .font(.caption.monospaced())
+-                            .foregroundColor(.secondary)
+-                    }
++                        .frame(width: 20)
++
++                    KuroSlider(value: volumeBinding)
++                        .frame(width: 110)
+                 }
+                 .frame(width: 250, alignment: .trailing)
+             }
+@@ -119,13 +131,56 @@ struct PlayerBarView: View {
+         .padding(16)
+         .glassEffect(.regular, in: .rect(cornerRadius: 12))
+     }
+-    
++
++    // MARK: - Scrubbing
++
++    /// While dragging, the bar follows the finger via scrubFraction; release
++    /// commits the seek.
++    private var progressBinding: Binding<Double> {
++        Binding(
++            get: { viewModel.scrubFraction ?? progress },
++            set: { viewModel.scrubFraction = $0 }
++        )
++    }
++
++    private func commitScrub() {
++        guard let fraction = viewModel.scrubFraction else { return }
++        viewModel.seek(to: fraction * viewModel.duration)
++        viewModel.scrubFraction = nil
++    }
++
++    private var displayedTime: TimeInterval {
++        if let fraction = viewModel.scrubFraction {
++            return fraction * viewModel.duration
++        }
++        return viewModel.currentTime
++    }
++
+     private var progress: Double {
+-        guard let track = viewModel.currentTrack, track.duration > 0 else { return 0 }
+-        return viewModel.currentTime / track.duration
++        guard viewModel.duration > 0 else { return 0 }
++        return (viewModel.currentTime / viewModel.duration).clamped(to: 0...1)
++    }
++
++    // MARK: - Volume
++
++    private var volumeBinding: Binding<Double> {
++        Binding(
++            get: { Double(viewModel.volume) },
++            set: { viewModel.setVolume(Float($0)) }
++        )
+     }
+-    
++
++    private var volumeIcon: String {
++        switch viewModel.volume {
++        case 0: return "speaker.slash.fill"
++        case ..<0.33: return "speaker.wave.1.fill"
++        case ..<0.66: return "speaker.wave.2.fill"
++        default: return "speaker.wave.3.fill"
++        }
++    }
++
+     private func formatTime(_ time: TimeInterval) -> String {
++        guard time.isFinite, time >= 0 else { return "0:00" }
+         let minutes = Int(time) / 60
+         let seconds = Int(time) % 60
+         return String(format: "%d:%02d", minutes, seconds)
+diff --git a/Sources/KuroPlayer/UI/Views/PlaylistDetailView.swift b/Sources/KuroPlayer/UI/Views/PlaylistDetailView.swift
+new file mode 100644
+index 0000000..3d71cc7
+--- /dev/null
++++ b/Sources/KuroPlayer/UI/Views/PlaylistDetailView.swift
+@@ -0,0 +1,148 @@
++import SwiftUI
++
++struct PlaylistDetailView: View {
++    let playlistID: String
++
++    @EnvironmentObject var viewModel: PlayerViewModel
++    @StateObject private var playlistStore = PlaylistStore.shared
++    @EnvironmentObject private var theme: ThemeManager
++
++    private var playlist: Playlist? {
++        playlistStore.playlist(id: playlistID)
++    }
++
++    var body: some View {
++        if let playlist {
++            ScrollView {
++                VStack(alignment: .leading, spacing: 24) {
++                    header(for: playlist)
++                        .padding(.horizontal, 24)
++                        .padding(.top, 24)
++
++                    // Track list
++                    GlassEffectContainer(spacing: 2) {
++                        LazyVStack(spacing: 2) {
++                            ForEach(Array(playlist.tracks.enumerated()), id: \.element.id) { index, track in
++                                Button(action: {
++                                    viewModel.playFromList(playlist.tracks, startingAt: index)
++                                }) {
++                                    HStack(spacing: 8) {
++                                        Text("\(index + 1)")
++                                            .font(.caption.monospaced())
++                                            .foregroundStyle(.secondary)
++                                            .frame(width: 28, alignment: .trailing)
++
++                                        TrackRowContent(track: track)
++                                    }
++                                }
++                                .buttonStyle(.plain)
++                                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 8))
++                                .contextMenu {
++                                    Button("Add to Queue") {
++                                        viewModel.addToQueue(track)
++                                    }
++                                }
++                            }
++                        }
++                        .padding(.horizontal, 24)
++                    }
++                    .padding(.bottom, 100)
++                }
++            }
++            .scrollIndicators(.hidden)
++        } else {
++            VStack(spacing: 16) {
++                Image(systemName: "questionmark.square.dashed")
++                    .font(.system(size: 48))
++                    .foregroundStyle(.secondary)
++                Text("Playlist not found")
++                    .font(.title3)
++                    .foregroundStyle(.secondary)
++                Button("Back to Playlists") {
++                    viewModel.selectedView = .playlists
++                }
++                .buttonStyle(.glass)
++            }
++            .frame(maxWidth: .infinity, maxHeight: .infinity)
++        }
++    }
++
++    private func header(for playlist: Playlist) -> some View {
++        HStack(alignment: .bottom, spacing: 20) {
++            PlaylistArtwork(url: playlist.displayArtworkURL, cornerRadius: 16)
++                .frame(width: 180, height: 180)
++                .shadow(radius: 8, y: 4)
++
++            VStack(alignment: .leading, spacing: 8) {
++                if let providerType = playlist.providerType {
++                    Label(providerType.displayName, systemImage: providerType.iconName)
++                        .font(.caption)
++                        .foregroundStyle(.secondary)
++                        .padding(.horizontal, 8)
++                        .padding(.vertical, 3)
++                        .glassEffect(.regular, in: .capsule)
++                }
++
++                Text(playlist.name)
++                    .font(.largeTitle.bold())
++                    .lineLimit(2)
++
++                if let uploader = playlist.uploader, !uploader.isEmpty {
++                    Text("by \(uploader)")
++                        .font(.headline)
++                        .foregroundStyle(.secondary)
++                }
++
++                Text("\(playlist.trackCount) tracks • \(playlist.formattedTotalDuration)")
++                    .font(.caption)
++                    .foregroundStyle(.secondary)
++
++                HStack(spacing: 12) {
++                    Button(action: {
++                        viewModel.playFromList(playlist.tracks, startingAt: 0)
++                    }) {
++                        Label("Play", systemImage: "play.fill")
++                    }
++                    .buttonStyle(.glassProminent)
++                    .disabled(playlist.tracks.isEmpty)
++
++                    Button(action: {
++                        viewModel.playShuffled(playlist.tracks)
++                    }) {
++                        Label("Shuffle", systemImage: "shuffle")
++                    }
++                    .buttonStyle(.glass)
++                    .disabled(playlist.tracks.isEmpty)
++
++                    if playlist.sourceURL != nil {
++                        Button(action: {
++                            viewModel.refreshPlaylist(playlist)
++                        }) {
++                            if viewModel.isImportingPlaylist {
++                                ProgressView()
++                                    .controlSize(.small)
++                            } else {
++                                Image(systemName: "arrow.clockwise")
++                            }
++                        }
++                        .buttonStyle(.glass)
++                        .disabled(viewModel.isImportingPlaylist)
++                        .help("Re-sync from source")
++                    }
++
++                    Button(role: .destructive, action: {
++                        viewModel.removePlaylist(playlist)
++                    }) {
++                        Image(systemName: "trash")
++                    }
++                    .buttonStyle(.glass)
++                    .tint(theme.error)
++                    .help("Remove playlist")
++                }
++                .padding(.top, 4)
++            }
++
++            Spacer()
++        }
++    }
++}
+diff --git a/Sources/KuroPlayer/UI/Views/PlaylistsView.swift b/Sources/KuroPlayer/UI/Views/PlaylistsView.swift
+new file mode 100644
+index 0000000..995bae1
+--- /dev/null
++++ b/Sources/KuroPlayer/UI/Views/PlaylistsView.swift
+@@ -0,0 +1,161 @@
++import SwiftUI
++
++struct PlaylistsView: View {
++    @EnvironmentObject var viewModel: PlayerViewModel
++    @StateObject private var playlistStore = PlaylistStore.shared
++    @EnvironmentObject private var theme: ThemeManager
++
++    private let columns = [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16)]
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 0) {
++            // Header
++            Text("Playlists")
++                .font(.largeTitle.bold())
++                .padding(.horizontal, 24)
++                .padding(.top, 24)
++
++            // Import bar
++            HStack(spacing: 12) {
++                Image(systemName: "link")
++                    .foregroundStyle(.secondary)
++
++                TextField("Paste a SoundCloud set or YouTube playlist link...", text: $viewModel.playlistImportText)
++                    .textFieldStyle(.plain)
++                    .onSubmit {
++                        viewModel.importPlaylist(from: viewModel.playlistImportText)
++                    }
++
++                if viewModel.isImportingPlaylist {
++                    ProgressView()
++                        .controlSize(.small)
++                } else {
++                    Button("Import") {
++                        viewModel.importPlaylist(from: viewModel.playlistImportText)
++                    }
++                    .buttonStyle(.glassProminent)
++                    .disabled(viewModel.playlistImportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++                }
++            }
++            .padding(12)
++            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
++            .padding(.horizontal, 24)
++            .padding(.top, 16)
++
++            if let status = viewModel.importStatusMessage {
++                HStack(spacing: 8) {
++                    ProgressView()
++                        .controlSize(.mini)
++                    Text(status)
++                        .font(.caption)
++                        .foregroundStyle(.secondary)
++                }
++                .padding(.horizontal, 24)
++                .padding(.top, 8)
++            }
++
++            // Grid
++            if playlistStore.playlists.isEmpty {
++                VStack(spacing: 16) {
++                    Image(systemName: "square.grid.2x2")
++                        .font(.system(size: 60))
++                        .foregroundStyle(.secondary)
++
++                    Text("No playlists yet")
++                        .font(.title3)
++                        .foregroundStyle(.secondary)
++
++                    Text("Import a SoundCloud set or a YouTube / YouTube Music playlist by pasting its link above")
++                        .font(.caption)
++                        .foregroundStyle(.tertiary)
++                        .multilineTextAlignment(.center)
++                        .frame(maxWidth: 360)
++                }
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++            } else {
++                ScrollView {
++                    LazyVGrid(columns: columns, spacing: 16) {
++                        ForEach(playlistStore.playlists) { playlist in
++                            PlaylistCard(playlist: playlist)
++                        }
++                    }
++                    .padding(24)
++                    .padding(.bottom, 80)
++                }
++                .scrollIndicators(.hidden)
++            }
++        }
++    }
++}
++
++struct PlaylistCard: View {
++    let playlist: Playlist
++
++    @EnvironmentObject var viewModel: PlayerViewModel
++
++    var body: some View {
++        Button(action: {
++            viewModel.selectedView = .playlist(playlist.id)
++        }) {
++            VStack(alignment: .leading, spacing: 8) {
++                PlaylistArtwork(url: playlist.displayArtworkURL, cornerRadius: 12)
++                    .aspectRatio(1, contentMode: .fit)
++
++                VStack(alignment: .leading, spacing: 2) {
++                    Text(playlist.name)
++                        .font(.headline)
++                        .lineLimit(1)
++
++                    HStack(spacing: 4) {
++                        if let providerType = playlist.providerType {
++                            Image(systemName: providerType.iconName)
++                                .font(.caption2)
++                        }
++                        Text("\(playlist.trackCount) tracks • \(playlist.formattedTotalDuration)")
++                            .font(.caption)
++                    }
++                    .foregroundStyle(.secondary)
++                }
++                .padding(.horizontal, 4)
++                .padding(.bottom, 4)
++            }
++            .padding(8)
++        }
++        .buttonStyle(.plain)
++        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
++        .contextMenu {
++            Button("Play") {
++                viewModel.playFromList(playlist.tracks, startingAt: 0)
++            }
++            Button("Shuffle") {
++                viewModel.playShuffled(playlist.tracks)
++            }
++            Divider()
++            Button("Remove Playlist", role: .destructive) {
++                viewModel.removePlaylist(playlist)
++            }
++        }
++    }
++}
++
++/// Square playlist artwork with a consistent placeholder.
++struct PlaylistArtwork: View {
++    let url: URL?
++    var cornerRadius: CGFloat = 12
++
++    var body: some View {
++        AsyncImage(url: url) { image in
++            image
++                .resizable()
++                .aspectRatio(contentMode: .fill)
++        } placeholder: {
++            ZStack {
++                Color.gray.opacity(0.2)
++                Image(systemName: "music.note.list")
++                    .font(.system(size: 36))
++                    .foregroundStyle(.secondary)
++            }
++        }
++        .clipShape(.rect(cornerRadius: cornerRadius))
++    }
++}
+diff --git a/Sources/KuroPlayer/UI/Views/QueueView.swift b/Sources/KuroPlayer/UI/Views/QueueView.swift
+index 1c5f2f5..a6319da 100644
+--- a/Sources/KuroPlayer/UI/Views/QueueView.swift
++++ b/Sources/KuroPlayer/UI/Views/QueueView.swift
+@@ -2,35 +2,41 @@ import SwiftUI
+ 
+ struct QueueView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++
+     var body: some View {
+         VStack(spacing: 0) {
+             // Header
+             HStack {
+                 Text("Play Queue")
+-                    .font(.title2.bold())
+-                
++                    .font(.largeTitle.bold())
++
+                 Spacer()
+-                
++
+                 if !viewModel.queue.isEmpty {
+                     Text("\(viewModel.queue.count) tracks")
+                         .font(.caption)
+                         .foregroundStyle(.secondary)
++
++                    Button(action: { viewModel.clearQueue() }) {
++                        Image(systemName: "trash")
++                    }
++                    .buttonStyle(.glass)
++                    .help("Clear queue")
+                 }
+             }
+-            .padding(20)
+-            
++            .padding(24)
++
+             // Queue list
+             if viewModel.queue.isEmpty {
+                 VStack(spacing: 16) {
+                     Image(systemName: "music.note.list")
+                         .font(.system(size: 48))
+                         .foregroundStyle(.secondary)
+-                    
++
+                     Text("Queue is empty")
+                         .font(.headline)
+                         .foregroundStyle(.secondary)
+-                    
++
+                     Text("Add tracks from your library or search")
+                         .font(.caption)
+                         .foregroundStyle(.tertiary)
+@@ -42,7 +48,7 @@ struct QueueView: View {
+                         QueueRow(
+                             track: track,
+                             index: index,
+-                            isActive: index == viewModel.playbackEngine.state.currentIndex
++                            isActive: index == viewModel.currentQueueIndex
+                         )
+                         .listRowSeparator(.hidden)
+                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+@@ -58,6 +64,7 @@ struct QueueView: View {
+                 }
+                 .listStyle(.plain)
+                 .scrollContentBackground(.hidden)
++                .scrollIndicators(.hidden)
+             }
+         }
+         .frame(minWidth: 350, minHeight: 400)
+@@ -69,7 +76,9 @@ struct QueueRow: View {
+     let track: Track
+     let index: Int
+     let isActive: Bool
+-    
++
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         HStack(spacing: 12) {
+             // Index or playing indicator
+@@ -84,22 +93,22 @@ struct QueueRow: View {
+                 }
+             }
+             .frame(width: 20)
+-            
++
+             // Track info
+             VStack(alignment: .leading, spacing: 2) {
+                 Text(track.title)
+                     .font(.body.weight(isActive ? .semibold : .regular))
+-                    .foregroundStyle(isActive ? KurokulaTheme.accent : .primary)
++                    .foregroundStyle(isActive ? theme.accent : .primary)
+                     .lineLimit(1)
+-                
++
+                 Text(track.artist)
+                     .font(.caption)
+                     .foregroundStyle(.secondary)
+                     .lineLimit(1)
+             }
+-            
++
+             Spacer()
+-            
++
+             // Duration
+             Text(track.formattedDuration)
+                 .font(.caption.monospaced())
+@@ -107,6 +116,6 @@ struct QueueRow: View {
+         }
+         .padding(.horizontal, 12)
+         .padding(.vertical, 8)
+-        .glassEffect(.regular.tint(isActive ? KurokulaTheme.accent.opacity(0.2) : .clear), in: .rect(cornerRadius: 8))
++        .glassEffect(.regular.tint(isActive ? theme.accent.opacity(0.2) : .clear), in: .rect(cornerRadius: 8))
+     }
+ }
+diff --git a/Sources/KuroPlayer/UI/Views/SearchView.swift b/Sources/KuroPlayer/UI/Views/SearchView.swift
+index b2fa190..bdb278a 100644
+--- a/Sources/KuroPlayer/UI/Views/SearchView.swift
++++ b/Sources/KuroPlayer/UI/Views/SearchView.swift
+@@ -2,20 +2,24 @@ import SwiftUI
+ 
+ struct SearchView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         VStack(alignment: .leading, spacing: 0) {
+             // Search field
+             HStack {
+                 Image(systemName: "magnifyingglass")
+                     .foregroundStyle(.secondary)
+-                
+-                TextField("Search tracks...", text: $viewModel.searchText)
++
++                TextField("Search tracks, or paste a playlist link...", text: $viewModel.searchText)
+                     .textFieldStyle(.plain)
+                     .onChange(of: viewModel.searchText) { _, newValue in
+-                        Task { await viewModel.search(query: newValue) }
++                        viewModel.searchTextChanged(newValue)
+                     }
+-                
++                    .onSubmit {
++                        viewModel.searchNow()
++                    }
++
+                 if !viewModel.searchText.isEmpty {
+                     Button(action: { viewModel.searchText = "" }) {
+                         Image(systemName: "xmark.circle.fill")
+@@ -27,12 +31,16 @@ struct SearchView: View {
+             .padding(12)
+             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
+             .padding(24)
+-            
+-            // Results
+-            if viewModel.isSearching {
+-                VStack {
++
++            // Playlist link detected → offer import instead of searching
++            if let playlistURL = viewModel.detectPlaylistURL(in: viewModel.searchText) {
++                PlaylistImportCard(url: playlistURL)
++                    .padding(.horizontal, 24)
++                Spacer()
++            } else if viewModel.isSearching {
++                VStack(spacing: 12) {
+                     ProgressView()
+-                    Text("Searching...")
++                    Text("Searching YouTube Music & SoundCloud…")
+                         .foregroundStyle(.secondary)
+                 }
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+@@ -41,10 +49,14 @@ struct SearchView: View {
+                     Image(systemName: "magnifyingglass")
+                         .font(.system(size: 60))
+                         .foregroundStyle(.secondary)
+-                    
++
+                     Text("Search across all your connected services")
+                         .font(.title3)
+                         .foregroundStyle(.secondary)
++
++                    Text("Tip: paste a SoundCloud set or YouTube playlist link to import it")
++                        .font(.caption)
++                        .foregroundStyle(.tertiary)
+                 }
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+             } else if viewModel.searchResults.isEmpty {
+@@ -52,7 +64,7 @@ struct SearchView: View {
+                     Image(systemName: "music.note.slash")
+                         .font(.system(size: 60))
+                         .foregroundStyle(.secondary)
+-                    
++
+                     Text("No results found")
+                         .font(.title3)
+                         .foregroundStyle(.secondary)
+@@ -62,9 +74,9 @@ struct SearchView: View {
+                 ScrollView {
+                     GlassEffectContainer(spacing: 2) {
+                         LazyVStack(spacing: 2) {
+-                            ForEach(viewModel.searchResults) { track in
++                            ForEach(Array(viewModel.searchResults.enumerated()), id: \.element.id) { index, track in
+                                 Button(action: {
+-                                    viewModel.play(track: track)
++                                    viewModel.playFromList(viewModel.searchResults, startingAt: index)
+                                 }) {
+                                     TrackRowContent(track: track)
+                                 }
+@@ -73,12 +85,57 @@ struct SearchView: View {
+                                     .regular.interactive(),
+                                     in: .rect(cornerRadius: 8)
+                                 )
++                                .contextMenu {
++                                    Button("Add to Queue") {
++                                        viewModel.addToQueue(track)
++                                    }
++                                }
+                             }
+                         }
+                         .padding(.horizontal, 24)
+                     }
+                 }
++                .scrollIndicators(.hidden)
++            }
++        }
++    }
++}
++
++/// Shown when the search field contains an importable playlist link.
++struct PlaylistImportCard: View {
++    let url: URL
++
++    @EnvironmentObject var viewModel: PlayerViewModel
++    @EnvironmentObject private var theme: ThemeManager
++
++    var body: some View {
++        HStack(spacing: 16) {
++            Image(systemName: "square.and.arrow.down")
++                .font(.title2)
++                .foregroundStyle(theme.accent)
++
++            VStack(alignment: .leading, spacing: 4) {
++                Text("Playlist link detected")
++                    .font(.headline)
++                Text(viewModel.importStatusMessage ?? url.absoluteString)
++                    .font(.caption)
++                    .foregroundStyle(.secondary)
++                    .lineLimit(1)
++            }
++
++            Spacer()
++
++            if viewModel.isImportingPlaylist {
++                ProgressView()
++                    .controlSize(.small)
++            } else {
++                Button("Import Playlist") {
++                    viewModel.importPlaylist(from: url.absoluteString)
++                }
++                .buttonStyle(.glassProminent)
+             }
+         }
++        .padding()
++        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+     }
+ }
+diff --git a/Sources/KuroPlayer/UI/Views/SettingsView.swift b/Sources/KuroPlayer/UI/Views/SettingsView.swift
+index 52ac16d..aa6d6b7 100644
+--- a/Sources/KuroPlayer/UI/Views/SettingsView.swift
++++ b/Sources/KuroPlayer/UI/Views/SettingsView.swift
+@@ -2,7 +2,8 @@ import SwiftUI
+ 
+ struct SettingsView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+-    
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         ScrollView {
+             VStack(alignment: .leading, spacing: 32) {
+@@ -11,104 +12,135 @@ struct SettingsView: View {
+                     .font(.largeTitle.bold())
+                     .padding(.horizontal, 24)
+                     .padding(.top, 24)
+-                
+-                // Music Services
++
++                // Appearance
+                 VStack(alignment: .leading, spacing: 16) {
+-                    Text("Music Services")
++                    Text("Appearance")
+                         .font(.title2.bold())
+-                    
+-                    GlassEffectContainer(spacing: 12) {
+-                        VStack(spacing: 12) {
+-                            ProviderRow(
+-                                name: "YouTube Music",
+-                                icon: "play.rectangle",
+-                                isConnected: AuthManager.shared.isAuthenticatedYouTubeMusic,
+-                                onConnect: {
+-                                    Task { await viewModel.authenticateProvider(.youtubeMusic) }
+-                                },
+-                                onDisconnect: {
+-                                    Task { await viewModel.logoutProvider(.youtubeMusic) }
+-                                }
+-                            )
+-                            
+-                            Divider()
+-                            
+-                            ProviderRow(
+-                                name: "SoundCloud",
+-                                icon: "cloud",
+-                                isConnected: AuthManager.shared.isAuthenticatedSoundCloud,
+-                                onConnect: {
+-                                    Task { await viewModel.authenticateProvider(.soundcloud) }
+-                                },
+-                                onDisconnect: {
+-                                    Task { await viewModel.logoutProvider(.soundcloud) }
++
++                    VStack(alignment: .leading, spacing: 12) {
++                        HStack {
++                            Text("Theme")
++                                .font(.body)
++                            Spacer()
++                            Picker("", selection: themeModeBinding) {
++                                ForEach(theme.availableModes) { mode in
++                                    Text(mode.displayName).tag(mode)
+                                 }
+-                            )
++                            }
++                            .labelsHidden()
++                            .pickerStyle(.segmented)
++                            .frame(maxWidth: 280)
+                         }
+-                        .padding()
+-                        .glassEffect(.regular, in: .rect(cornerRadius: 12))
++
++                        Text(theme.mode == .system
++                             ? "Follows macOS light/dark mode and your system accent color."
++                             : "The original KuroPlayer look — dark charcoal with crimson and neon accents.")
++                            .font(.caption)
++                            .foregroundStyle(.secondary)
+                     }
++                    .padding()
++                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                 }
+                 .padding(.horizontal, 24)
+-                
+-                // Scrobbling
++
++                // Equalizer
++                EqualizerSettingsSection()
++                    .padding(.horizontal, 24)
++
++                // Music Services
+                 VStack(alignment: .leading, spacing: 16) {
+-                    Text("Scrobbling")
++                    Text("Music Services")
+                         .font(.title2.bold())
+-                    
+-                    GlassEffectContainer {
++
++                    VStack(spacing: 12) {
+                         ProviderRow(
+-                            name: "Last.fm",
+-                            icon: "waveform",
+-                            isConnected: AuthManager.shared.isAuthenticatedLastFm,
++                            name: "YouTube Music",
++                            icon: "play.rectangle",
++                            isConnected: AuthManager.shared.isAuthenticatedYouTubeMusic,
+                             onConnect: {
+-                                Task {
+-                                    do {
+-                                        try await LastFmAuth.shared.authenticate()
+-                                        AuthManager.shared.refreshState()
+-                                    } catch {
+-                                        viewModel.errorMessage = error.localizedDescription
+-                                    }
+-                                }
++                                Task { await viewModel.authenticateProvider(.youtubeMusic) }
+                             },
+                             onDisconnect: {
+-                                LastFmAuth.shared.logout()
+-                                AuthManager.shared.refreshState()
++                                Task { await viewModel.logoutProvider(.youtubeMusic) }
++                            }
++                        )
++
++                        Divider()
++
++                        ProviderRow(
++                            name: "SoundCloud",
++                            icon: "cloud",
++                            isConnected: AuthManager.shared.isAuthenticatedSoundCloud,
++                            onConnect: {
++                                Task { await viewModel.authenticateProvider(.soundcloud) }
++                            },
++                            onDisconnect: {
++                                Task { await viewModel.logoutProvider(.soundcloud) }
+                             }
+                         )
+-                        .padding()
+-                        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                     }
++                    .padding()
++                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
++                }
++                .padding(.horizontal, 24)
++
++                // Scrobbling
++                VStack(alignment: .leading, spacing: 16) {
++                    Text("Scrobbling")
++                        .font(.title2.bold())
++
++                    ProviderRow(
++                        name: "Last.fm",
++                        icon: "waveform",
++                        isConnected: AuthManager.shared.isAuthenticatedLastFm,
++                        onConnect: {
++                            Task {
++                                do {
++                                    try await LastFmAuth.shared.authenticate()
++                                    AuthManager.shared.refreshState()
++                                } catch {
++                                    viewModel.errorMessage = error.localizedDescription
++                                }
++                            }
++                        },
++                        onDisconnect: {
++                            LastFmAuth.shared.logout()
++                            AuthManager.shared.refreshState()
++                        }
++                    )
++                    .padding()
++                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                 }
+                 .padding(.horizontal, 24)
+-                
++
+                 // API Keys
+                 VStack(alignment: .leading, spacing: 16) {
+                     Text("API Keys")
+                         .font(.title2.bold())
+-                    
++
+                     Text("Set your API keys here. Saved locally.")
+                         .font(.caption)
+                         .foregroundStyle(.secondary)
+-                    
++
+                     // Last.fm
+                     VStack(alignment: .leading, spacing: 12) {
+                         Text("Last.fm")
+                             .font(.headline)
+-                            .foregroundStyle(KurokulaTheme.secondary)
+-                        
++                            .foregroundStyle(theme.secondaryAccent)
++
+                         ApiKeyField(label: "API Key", key: "lastfm_api_key", placeholder: "Get from last.fm/api")
+                         ApiKeyField(label: "Shared Secret", key: "lastfm_api_secret", placeholder: "Get from last.fm/api")
+                     }
+                     .padding()
+                     .glassEffect(.regular, in: .rect(cornerRadius: 12))
+-                    
++
+                     // SoundCloud
+                     VStack(alignment: .leading, spacing: 12) {
+                         Text("SoundCloud")
+                             .font(.headline)
+-                            .foregroundStyle(KurokulaTheme.secondary)
+-                        
++                            .foregroundStyle(theme.secondaryAccent)
++
+                         ApiKeyField(label: "Client ID", key: "soundcloud_client_id", placeholder: "Not needed for anonymous scraping")
+                         ApiKeyField(label: "Client Secret", key: "soundcloud_client_secret", placeholder: "Not needed for anonymous scraping")
+                     }
+@@ -116,29 +148,53 @@ struct SettingsView: View {
+                     .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                 }
+                 .padding(.horizontal, 24)
+-                
++
+                 // About
+                 VStack(alignment: .leading, spacing: 16) {
+                     Text("About")
+                         .font(.title2.bold())
+-                    
++
+                     VStack(alignment: .leading, spacing: 12) {
+                         HStack {
+                             Text("Version")
+                                 .foregroundStyle(.secondary)
+                             Spacer()
+-                            Text("1.0.0")
++                            // Seven clicks unlock the Kurokula theme switch.
++                            Text("1.1.0")
+                                 .foregroundStyle(.primary)
++                                .onTapGesture {
++                                    theme.registerSecretTap()
++                                }
+                         }
+-                        
++
+                         HStack {
+                             Text("Theme")
+                                 .foregroundStyle(.secondary)
+                             Spacer()
+-                            Text("Kurokula")
+-                                .foregroundStyle(KurokulaTheme.secondary)
++                            Text(theme.mode.displayName)
++                                .foregroundStyle(theme.mode == .kurokula ? theme.secondaryAccent : .primary)
+                                 .fontWeight(.medium)
+                         }
++
++                        if theme.justUnlocked {
++                            HStack(spacing: 6) {
++                                Image(systemName: "moon.stars.fill")
++                                Text("Kurokula unlocked")
++                            }
++                            .font(.caption)
++                            .foregroundStyle(theme.secondaryAccent)
++                            .transition(.opacity)
++                        }
++
++                        if !YtDlp.isAvailable {
++                            HStack(spacing: 6) {
++                                Image(systemName: "exclamationmark.triangle.fill")
++                                    .foregroundStyle(.orange)
++                                Text("yt-dlp not found — install with `brew install yt-dlp` to enable streaming")
++                                    .font(.caption)
++                                    .foregroundStyle(.secondary)
++                            }
++                        }
+                     }
+                     .padding()
+                     .glassEffect(.regular, in: .rect(cornerRadius: 12))
+@@ -147,6 +203,16 @@ struct SettingsView: View {
+                 .padding(.bottom, 100)
+             }
+         }
++        .scrollIndicators(.hidden)
++        .animation(.smooth(duration: 0.3), value: theme.justUnlocked)
++        .animation(.smooth(duration: 0.3), value: theme.mode)
++    }
++
++    private var themeModeBinding: Binding<ThemeManager.Mode> {
++        Binding(
++            get: { theme.mode },
++            set: { theme.setMode($0) }
++        )
+     }
+ }
+ 
+@@ -156,31 +222,32 @@ struct ProviderRow: View {
+     let isConnected: Bool
+     let onConnect: () -> Void
+     let onDisconnect: () -> Void
+-    
++
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         HStack {
+             Image(systemName: icon)
+                 .font(.title3)
+                 .frame(width: 28)
+-            
++
+             Text(name)
+                 .font(.body)
+-            
++
+             Spacer()
+-            
++
+             Circle()
+-                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
++                .fill(isConnected ? theme.success : .secondary.opacity(0.3))
+                 .frame(width: 8, height: 8)
+-                .glassEffect(.regular, in: .circle)
+-            
++
+             if isConnected {
+                 Button("Disconnect", action: onDisconnect)
+                     .buttonStyle(.glass)
+-                    .tint(KurokulaTheme.error)
++                    .tint(theme.error)
+             } else {
+                 Button("Connect", action: onConnect)
+                     .buttonStyle(.glass)
+-                    .tint(KurokulaTheme.secondary)
++                    .tint(theme.secondaryAccent)
+             }
+         }
+     }
+@@ -192,27 +259,27 @@ struct ApiKeyField: View {
+     let label: String
+     let key: String
+     let placeholder: String
+-    
++
+     private var text: Binding<String> {
+         Binding(
+             get: { UserDefaults.standard.string(forKey: key) ?? "" },
+             set: { UserDefaults.standard.set($0, forKey: key) }
+         )
+     }
+-    
++
+     init(label: String, key: String, placeholder: String) {
+         self.label = label
+         self.key = key
+         self.placeholder = placeholder
+     }
+-    
++
+     var body: some View {
+         HStack {
+             Text(label)
+                 .font(.caption)
+                 .foregroundStyle(.secondary)
+                 .frame(width: 100, alignment: .leading)
+-            
++
+             SecureField(placeholder, text: text)
+                 .textFieldStyle(.plain)
+                 .font(.caption)
+diff --git a/Sources/KuroPlayer/UI/Views/SidebarView.swift b/Sources/KuroPlayer/UI/Views/SidebarView.swift
+index d560afc..1a4440e 100644
+--- a/Sources/KuroPlayer/UI/Views/SidebarView.swift
++++ b/Sources/KuroPlayer/UI/Views/SidebarView.swift
+@@ -1,67 +1,96 @@
+ import SwiftUI
+ 
+-enum MainView: String, CaseIterable, Identifiable, Hashable {
+-    case home, search, library, queue, settings
+-    var id: String { rawValue }
++enum MainView: Hashable, Identifiable {
++    case home
++    case search
++    case library
++    case playlists
++    case queue
++    case settings
++    case playlist(String)
++
++    var id: String {
++        switch self {
++        case .home: return "home"
++        case .search: return "search"
++        case .library: return "library"
++        case .playlists: return "playlists"
++        case .queue: return "queue"
++        case .settings: return "settings"
++        case .playlist(let playlistID): return "playlist-\(playlistID)"
++        }
++    }
+ }
+ 
+ struct SidebarView: View {
+     @EnvironmentObject var viewModel: PlayerViewModel
+     @StateObject private var authManager = AuthManager.shared
+-    
++    @StateObject private var playlistStore = PlaylistStore.shared
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         List(selection: $viewModel.selectedView) {
+             Section {
+                 Label("Home", systemImage: "house.fill")
+                     .tag(MainView.home)
+-                
++
+                 Label("Search", systemImage: "magnifyingglass")
+                     .tag(MainView.search)
+-                
++
+                 Label("Library", systemImage: "music.note.list")
+                     .tag(MainView.library)
+-                
++
+                 Label("Queue", systemImage: "list.bullet")
+                     .tag(MainView.queue)
+             }
+-            
++
+             Section("Playlists") {
+-                ForEach(viewModel.playlists) { playlist in
+-                    Label(playlist.name, systemImage: "music.note")
+-                        .tag(MainView.home) // TODO: Navigate to playlist view
++                Label("All Playlists", systemImage: "square.grid.2x2")
++                    .tag(MainView.playlists)
++
++                ForEach(playlistStore.playlists) { playlist in
++                    Label {
++                        Text(playlist.name)
++                            .lineLimit(1)
++                    } icon: {
++                        Image(systemName: playlist.providerType?.iconName ?? "music.note")
++                    }
++                    .tag(MainView.playlist(playlist.id))
++                    .contextMenu {
++                        Button("Remove Playlist", role: .destructive) {
++                            viewModel.removePlaylist(playlist)
++                        }
++                    }
+                 }
+             }
+-            
++
+             Section("Connected") {
+                 ServiceIndicator(
+                     name: "YouTube Music",
+                     icon: "play.rectangle",
+                     isConnected: authManager.isAuthenticatedYouTubeMusic
+                 )
+-                
++
+                 ServiceIndicator(
+                     name: "SoundCloud",
+                     icon: "cloud",
+                     isConnected: authManager.isAuthenticatedSoundCloud
+                 )
+-                
++
+                 ServiceIndicator(
+                     name: "Last.fm",
+                     icon: "waveform",
+                     isConnected: authManager.isAuthenticatedLastFm
+                 )
+             }
+-            
++
+             Section {
+-                Button {
+-                    viewModel.selectedView = .settings
+-                } label: {
+-                    Label("Settings", systemImage: "gear")
+-                }
+-                .buttonStyle(.plain)
++                Label("Settings", systemImage: "gear")
++                    .tag(MainView.settings)
+             }
+         }
+         .listStyle(.sidebar)
++        .scrollIndicators(.hidden)
+         .navigationTitle("KuroPlayer")
+     }
+ }
+@@ -70,14 +99,16 @@ struct ServiceIndicator: View {
+     let name: String
+     let icon: String
+     let isConnected: Bool
+-    
++
++    @EnvironmentObject private var theme: ThemeManager
++
+     var body: some View {
+         HStack {
+             Image(systemName: icon)
+             Text(name)
+             Spacer()
+             Circle()
+-                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
++                .fill(isConnected ? theme.success : .secondary.opacity(0.3))
+                 .frame(width: 8, height: 8)
+         }
+         .foregroundColor(isConnected ? .primary : .secondary)
+diff --git a/Sources/KuroPlayer/Utilities/Cache.swift b/Sources/KuroPlayer/Utilities/Cache.swift
+index 4391d4d..325d1f6 100644
+--- a/Sources/KuroPlayer/Utilities/Cache.swift
++++ b/Sources/KuroPlayer/Utilities/Cache.swift
+@@ -1,6 +1,8 @@
+ import Foundation
+ 
+-@MainActor class Cache {
++/// Disk-backed TTL cache. Thread-safe via an internal queue so providers can
++/// read/write from any isolation context without hopping to the main actor.
++final class Cache: @unchecked Sendable {
+     static let shared = Cache()
+ 
+     private let cacheDir: URL
+@@ -50,6 +52,12 @@ import Foundation
+         }
+     }
+ 
++    func removeObject(forKey key: String) {
++        queue.async(flags: .barrier) {
++            try? FileManager.default.removeItem(at: self.cacheDir.appendingPathComponent(self.hash(key)))
++        }
++    }
++
+     private func hash(_ string: String) -> String {
+         return Data(string.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-")
+     }
+diff --git a/Sources/KuroPlayer/Utilities/PlaylistStore.swift b/Sources/KuroPlayer/Utilities/PlaylistStore.swift
+new file mode 100644
+index 0000000..90c98db
+--- /dev/null
++++ b/Sources/KuroPlayer/Utilities/PlaylistStore.swift
+@@ -0,0 +1,59 @@
++import Foundation
++
++/// Local persistence for imported playlists. Saved as JSON in Application
++/// Support so playlists survive restarts.
++@MainActor
++final class PlaylistStore: ObservableObject {
++    static let shared = PlaylistStore()
++
++    @Published private(set) var playlists: [Playlist] = []
++
++    private let fileURL: URL
++
++    private init() {
++        let fileManager = FileManager.default
++        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
++        let appDir = appSupport.appendingPathComponent("KuroPlayer")
++        if !fileManager.fileExists(atPath: appDir.path) {
++            try? fileManager.createDirectory(at: appDir, withIntermediateDirectories: true)
++        }
++        fileURL = appDir.appendingPathComponent("playlists.json")
++        load()
++    }
++
++    func playlist(id: String) -> Playlist? {
++        playlists.first { $0.id == id }
++    }
++
++    /// Adds a playlist, replacing any earlier import of the same source.
++    func upsert(_ playlist: Playlist) {
++        if let index = playlists.firstIndex(where: { $0.id == playlist.id }) {
++            playlists[index] = playlist
++        } else {
++            playlists.append(playlist)
++        }
++        save()
++    }
++
++    func remove(id: String) {
++        playlists.removeAll { $0.id == id }
++        save()
++    }
++
++    private func load() {
++        guard let data = try? Data(contentsOf: fileURL),
++              let saved = try? JSONDecoder().decode([Playlist].self, from: data) else {
++            return
++        }
++        playlists = saved
++    }
++
++    private func save() {
++        do {
++            let data = try JSONEncoder().encode(playlists)
++            try data.write(to: fileURL)
++        } catch {
++            print("Failed to save playlists: \(error)")
++        }
++    }
++}
+diff --git a/Sources/KuroPlayer/Utilities/YtDlp.swift b/Sources/KuroPlayer/Utilities/YtDlp.swift
+new file mode 100644
+index 0000000..e721fb8
+--- /dev/null
++++ b/Sources/KuroPlayer/Utilities/YtDlp.swift
+@@ -0,0 +1,230 @@
++import Foundation
++
++/// Shared yt-dlp runner used by every streaming provider.
++///
++/// Centralizing this fixes the inconsistencies between providers:
++/// - one binary lookup (Homebrew, /usr/local, MacPorts, ~/.local) instead of a
++///   hard-coded path,
++/// - the same base flags everywhere (no config files, bounded socket timeouts,
++///   bounded retries) so SoundCloud and YouTube Music behave the same way,
++/// - cooperative cancellation: when a search Task is cancelled the underlying
++///   process is terminated instead of left running,
++/// - a hard timeout so a stalled network call can never leave the UI loading
++///   forever.
++enum YtDlp {
++    enum RunError: Error, LocalizedError {
++        case binaryNotFound
++        case timedOut
++        case failed(String)
++
++        var errorDescription: String? {
++            switch self {
++            case .binaryNotFound:
++                return "yt-dlp not found. Install it with: brew install yt-dlp"
++            case .timedOut:
++                return "yt-dlp timed out"
++            case .failed(let message):
++                return "yt-dlp failed: \(message)"
++            }
++        }
++    }
++
++    /// Flags applied to every invocation.
++    private static let baseFlags = [
++        "--no-config",
++        "--no-warnings",
++        "--socket-timeout", "15",
++        "--retries", "2"
++    ]
++
++    /// Resolved once, thread-safe by `static let` semantics.
++    static let binaryPath: String? = {
++        let candidates = [
++            "/opt/homebrew/bin/yt-dlp",
++            "/usr/local/bin/yt-dlp",
++            "/opt/local/bin/yt-dlp",
++            "/usr/bin/yt-dlp",
++            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/yt-dlp")
++        ]
++        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
++    }()
++
++    static var isAvailable: Bool { binaryPath != nil }
++
++    /// Runs yt-dlp and returns stdout. Throws on non-zero exit, timeout,
++    /// missing binary, or task cancellation.
++    static func run(_ args: [String], timeout: TimeInterval = 30) async throws -> String {
++        guard let path = binaryPath else {
++            throw RunError.binaryNotFound
++        }
++
++        let box = ProcessBox()
++        let process = Process()
++        process.executableURL = URL(fileURLWithPath: path)
++        process.arguments = baseFlags + args
++        box.store(process)
++
++        return try await withTaskCancellationHandler {
++            try Task.checkCancellation()
++            return try await withCheckedThrowingContinuation { continuation in
++                let stdoutPipe = Pipe()
++                let stderrPipe = Pipe()
++                process.standardOutput = stdoutPipe
++                process.standardError = stderrPipe
++
++                let outputBuffer = DataBuffer()
++                let errorBuffer = DataBuffer()
++                let timedOut = Locked(false)
++
++                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
++                    let data = handle.availableData
++                    if !data.isEmpty { outputBuffer.append(data) }
++                }
++                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
++                    let data = handle.availableData
++                    if !data.isEmpty { errorBuffer.append(data) }
++                }
++
++                let timeoutWork = DispatchWorkItem {
++                    timedOut.set(true)
++                    box.terminate()
++                }
++                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutWork)
++
++                process.terminationHandler = { proc in
++                    timeoutWork.cancel()
++
++                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
++                    stderrPipe.fileHandleForReading.readabilityHandler = nil
++
++                    // Drain anything still buffered in the pipes.
++                    if let rest = try? stdoutPipe.fileHandleForReading.readToEnd(), let rest {
++                        outputBuffer.append(rest)
++                    }
++                    if let rest = try? stderrPipe.fileHandleForReading.readToEnd(), let rest {
++                        errorBuffer.append(rest)
++                    }
++
++                    if proc.terminationStatus == 0 {
++                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
++                        continuation.resume(returning: output)
++                    } else if timedOut.get() {
++                        continuation.resume(throwing: RunError.timedOut)
++                    } else {
++                        let stderr = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
++                        let summary = stderr
++                            .components(separatedBy: .newlines)
++                            .first { $0.contains("ERROR") } ?? String(stderr.prefix(200))
++                        continuation.resume(throwing: RunError.failed(String(summary.prefix(200))))
++                    }
++                }
++
++                do {
++                    try process.run()
++                } catch {
++                    timeoutWork.cancel()
++                    continuation.resume(throwing: RunError.failed(error.localizedDescription))
++                }
++            }
++        } onCancel: {
++            box.terminate()
++        }
++    }
++
++    // MARK: - JSON helpers shared by providers
++
++    /// Parses one `--dump-json` line into a dictionary.
++    static func jsonObject(from line: String) -> [String: Any]? {
++        guard let data = line.data(using: .utf8),
++              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++            return nil
++        }
++        return json
++    }
++
++    /// Best artwork URL from a yt-dlp info dict: prefers the last (largest)
++    /// entry of `thumbnails`, falls back to `thumbnail`.
++    static func artworkURL(from json: [String: Any]) -> URL? {
++        if let thumbnails = json["thumbnails"] as? [[String: Any]] {
++            for thumb in thumbnails.reversed() {
++                if let urlString = thumb["url"] as? String, let url = URL(string: urlString) {
++                    return url
++                }
++            }
++        }
++        if let thumbnail = json["thumbnail"] as? String {
++            return URL(string: thumbnail)
++        }
++        return nil
++    }
++
++    /// Artist from a yt-dlp info dict with consistent fallbacks across extractors.
++    static func artist(from json: [String: Any]) -> String {
++        for key in ["artist", "uploader", "channel", "creator"] {
++            if let value = json[key] as? String, !value.isEmpty {
++                return value
++            }
++        }
++        return "Unknown Artist"
++    }
++
++    // MARK: - Supporting types
++
++    /// Holds the Process so the cancellation handler can reach it without
++    /// capturing a non-Sendable type directly.
++    private final class ProcessBox: @unchecked Sendable {
++        private let lock = NSLock()
++        private var process: Process?
++
++        func store(_ process: Process) {
++            lock.lock()
++            self.process = process
++            lock.unlock()
++        }
++
++        func terminate() {
++            lock.lock()
++            let proc = process
++            lock.unlock()
++            if let proc, proc.isRunning {
++                proc.terminate()
++            }
++        }
++    }
++
++    private final class DataBuffer: @unchecked Sendable {
++        private var data = Data()
++        private let lock = NSLock()
++
++        func append(_ newData: Data) {
++            lock.lock()
++            data.append(newData)
++            lock.unlock()
++        }
++
++        func getData() -> Data {
++            lock.lock()
++            defer { lock.unlock() }
++            return data
++        }
++    }
++
++    private final class Locked<T>: @unchecked Sendable {
++        private var value: T
++        private let lock = NSLock()
++
++        init(_ value: T) { self.value = value }
++
++        func set(_ newValue: T) {
++            lock.lock()
++            value = newValue
++            lock.unlock()
++        }
++
++        func get() -> T {
++            lock.lock()
++            defer { lock.unlock() }
++            return value
++        }
++    }
++}
+diff --git a/Sources/KuroPlayer/ViewModels/PlayerViewModel.swift b/Sources/KuroPlayer/ViewModels/PlayerViewModel.swift
+index 82c78a7..f80fe48 100644
+--- a/Sources/KuroPlayer/ViewModels/PlayerViewModel.swift
++++ b/Sources/KuroPlayer/ViewModels/PlayerViewModel.swift
+@@ -6,10 +6,14 @@ import Combine
+ class PlayerViewModel: ObservableObject {
+     @Published var currentTrack: Track?
+     @Published var isPlaying = false
++    @Published var isLoadingTrack = false
+     @Published var currentTime: TimeInterval = 0
+     @Published var duration: TimeInterval = 0
+     @Published var volume: Float = 0.7
+     @Published var queue: [Track] = []
++    @Published var currentQueueIndex = 0
++    @Published var isShuffled = false
++    @Published var repeatMode: RepeatMode = .off
+     @Published var searchResults: [Track] = []
+     @Published var libraryTracks: [Track] = []
+     @Published var playlists: [Playlist] = []
+@@ -17,30 +21,44 @@ class PlayerViewModel: ObservableObject {
+     @Published var errorMessage: String?
+     @Published var searchText = ""
+     @Published var selectedView: MainView = .home
+-    @Published var sliderVolume: Double = 0.7
+-    
++
++    // Scrubbing: non-nil while the user drags the progress bar.
++    @Published var scrubFraction: Double?
++
++    // Playlist import
++    @Published var playlistImportText = ""
++    @Published var isImportingPlaylist = false
++    @Published var importStatusMessage: String?
++
+     let playbackEngine: PlaybackEngine
+     private var cancellables = Set<AnyCancellable>()
+-    
++    private var searchTask: Task<Void, Never>?
++
+     init(playbackEngine: PlaybackEngine) {
+         self.playbackEngine = playbackEngine
+         setupBindings()
+     }
+-    
++
+     private func setupBindings() {
+         playbackEngine.$state
+             .receive(on: RunLoop.main)
+             .sink { [weak self] state in
+                 self?.currentTrack = state.currentTrack
+                 self?.isPlaying = state.status == .playing
++                self?.isLoadingTrack = state.status == .loading
+                 self?.currentTime = state.currentTime
+                 self?.duration = state.currentTrack?.duration ?? 0
+                 self?.volume = state.volume
+                 self?.queue = state.queue
++                self?.currentQueueIndex = state.currentIndex
++                self?.isShuffled = state.isShuffled
++                self?.repeatMode = state.repeatMode
+             }
+             .store(in: &cancellables)
+     }
+-    
++
++    // MARK: - Playback
++
+     func play(track: Track) {
+         Task {
+             do {
+@@ -50,7 +68,21 @@ class PlayerViewModel: ObservableObject {
+             }
+         }
+     }
+-    
++
++    /// Plays `tracks[index]` and queues the whole list, so next/previous
++    /// behave the same from search, library and playlists.
++    func playFromList(_ tracks: [Track], startingAt index: Int) {
++        guard tracks.indices.contains(index) else { return }
++        playbackEngine.setQueue(tracks)
++        playQueue(at: index)
++    }
++
++    func playShuffled(_ tracks: [Track]) {
++        guard !tracks.isEmpty else { return }
++        playbackEngine.setQueue(tracks.shuffled())
++        playQueue(at: 0)
++    }
++
+     func togglePlayPause() {
+         Task {
+             do {
+@@ -60,7 +92,7 @@ class PlayerViewModel: ObservableObject {
+             }
+         }
+     }
+-    
++
+     func next() {
+         Task {
+             do {
+@@ -70,7 +102,7 @@ class PlayerViewModel: ObservableObject {
+             }
+         }
+     }
+-    
++
+     func previous() {
+         Task {
+             do {
+@@ -80,15 +112,23 @@ class PlayerViewModel: ObservableObject {
+             }
+         }
+     }
+-    
++
+     func seek(to time: TimeInterval) {
+         playbackEngine.seek(to: time)
+     }
+-    
++
+     func setVolume(_ volume: Float) {
+         playbackEngine.setVolume(volume)
+     }
+-    
++
++    func toggleShuffle() {
++        playbackEngine.toggleShuffle()
++    }
++
++    func cycleRepeatMode() {
++        playbackEngine.cycleRepeatMode()
++    }
++
+     func playQueue(at index: Int) {
+         Task {
+             do {
+@@ -98,55 +138,151 @@ class PlayerViewModel: ObservableObject {
+             }
+         }
+     }
+-    
++
+     func setQueue(_ tracks: [Track]) {
+         playbackEngine.setQueue(tracks)
+     }
+-    
++
+     func addToQueue(_ track: Track) {
+         playbackEngine.addToQueue(track)
+     }
+-    
++
++    func clearQueue() {
++        playbackEngine.clearQueue()
++    }
++
+     func moveQueue(from source: IndexSet, to destination: Int) {
+         playbackEngine.moveQueue(from: source, to: destination)
+     }
+ 
+-    func search(query: String) async {
+-        guard !query.isEmpty else {
++    // MARK: - Search (debounced)
++
++    /// Called on every keystroke; waits 350 ms of quiet before hitting
++    /// yt-dlp, and cancels the in-flight search (terminating its processes)
++    /// when the query changes.
++    func searchTextChanged(_ query: String) {
++        searchTask?.cancel()
++
++        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard !trimmed.isEmpty else {
++            searchResults = []
++            isSearching = false
++            return
++        }
++
++        // Playlist links get an import card instead of a search.
++        if detectPlaylistURL(in: trimmed) != nil {
+             searchResults = []
++            isSearching = false
+             return
+         }
+-        
++
++        searchTask = Task { [weak self] in
++            try? await Task.sleep(nanoseconds: 350_000_000)
++            guard !Task.isCancelled else { return }
++            await self?.performSearch(query: trimmed)
++        }
++    }
++
++    /// Immediate search (Return key) — skips the debounce.
++    func searchNow() {
++        searchTask?.cancel()
++        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard !trimmed.isEmpty, detectPlaylistURL(in: trimmed) == nil else { return }
++        searchTask = Task { [weak self] in
++            await self?.performSearch(query: trimmed)
++        }
++    }
++
++    private func performSearch(query: String) async {
+         isSearching = true
+         let results = await ProviderRegistry.shared.searchAllProviders(query: query)
++        guard !Task.isCancelled else { return }
+         searchResults = results
+         isSearching = false
+     }
+-    
++
++    // MARK: - Playlist import
++
++    /// Returns the URL if `text` is a playlist link one of the providers can
++    /// import (SoundCloud set, YouTube/YouTube Music playlist).
++    func detectPlaylistURL(in text: String) -> URL? {
++        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
++        guard trimmed.lowercased().hasPrefix("http"), let url = URL(string: trimmed) else { return nil }
++        guard ProviderRegistry.shared.playlistImportProvider(for: url) != nil else { return nil }
++        return url
++    }
++
++    func importPlaylist(from urlString: String) {
++        guard !isImportingPlaylist else { return }
++        guard let url = detectPlaylistURL(in: urlString) else {
++            errorMessage = "That link doesn't look like a SoundCloud set or a YouTube playlist."
++            return
++        }
++
++        Task {
++            isImportingPlaylist = true
++            importStatusMessage = "Fetching playlist…"
++            defer {
++                isImportingPlaylist = false
++                importStatusMessage = nil
++            }
++
++            do {
++                guard let provider = ProviderRegistry.shared.playlistImportProvider(for: url) else { return }
++                importStatusMessage = "Resolving tracks — this can take a moment for large playlists…"
++                let playlist = try await provider.importPlaylist(url: url)
++                PlaylistStore.shared.upsert(playlist)
++                playlistImportText = ""
++                if searchText.trimmingCharacters(in: .whitespacesAndNewlines) == urlString.trimmingCharacters(in: .whitespacesAndNewlines) {
++                    searchText = ""
++                }
++                selectedView = .playlist(playlist.id)
++            } catch {
++                errorMessage = error.localizedDescription
++            }
++        }
++    }
++
++    /// Re-syncs an imported playlist from its source URL.
++    func refreshPlaylist(_ playlist: Playlist) {
++        guard let source = playlist.sourceURL else { return }
++        importPlaylist(from: source.absoluteString)
++    }
++
++    func removePlaylist(_ playlist: Playlist) {
++        PlaylistStore.shared.remove(id: playlist.id)
++        if selectedView == .playlist(playlist.id) {
++            selectedView = .playlists
++        }
++    }
++
++    // MARK: - Library
++
+     func loadLibrary() async {
+         var allTracks: [Track] = []
+         var allPlaylists: [Playlist] = []
+-        
++
+         for provider in ProviderRegistry.shared.authenticatedProviders() {
+             do {
+                 let tracks = try await provider.getLibrary()
+                 allTracks.append(contentsOf: tracks)
+-                
++
+                 let playlists = try await provider.getPlaylists()
+                 allPlaylists.append(contentsOf: playlists)
+             } catch {
+                 print("Error loading from \(provider.type): \(error)")
+             }
+         }
+-        
++
+         libraryTracks = allTracks
+         playlists = allPlaylists
+     }
+-    
++
+     func dismissError() {
+         errorMessage = nil
+     }
+-    
++
+     func authenticateProvider(_ type: MusicProviderType) async {
+         do {
+             guard let provider = ProviderRegistry.shared.provider(for: type) else { return }
+@@ -156,7 +292,7 @@ class PlayerViewModel: ObservableObject {
+             errorMessage = error.localizedDescription
+         }
+     }
+-    
++
+     func logoutProvider(_ type: MusicProviderType) async {
+         do {
+             guard let provider = ProviderRegistry.shared.provider(for: type) else { return }
+-- 
+2.54.0 (Apple Git-156)
+

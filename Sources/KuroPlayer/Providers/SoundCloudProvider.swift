@@ -1,210 +1,181 @@
 import Foundation
 
-class SoundCloudProvider: MusicProvider {
+@MainActor class SoundCloudProvider: MusicProvider {
     var type: MusicProviderType { .soundcloud }
-    var isAuthenticated: Bool { SoundCloudAuth.shared.accessToken != nil }
+    var isAuthenticated: Bool { true }
+
+    /// SoundCloud serves both progressive MP3 and HLS. Progressive starts
+    /// faster in AVPlayer and is required for the parametric EQ tap, so
+    /// prefer it explicitly — this also makes load times consistent with
+    /// the YouTube Music provider.
+    private let audioFormat = "bestaudio[protocol^=http]/bestaudio/best"
     
-    private let baseURL = "https://api.soundcloud.com"
-    
-    func authenticate() async throws {
-        try await SoundCloudAuth.shared.authenticate()
-    }
-    
-    func logout() async throws {
-        SoundCloudAuth.shared.logout()
-    }
-    
+    // In-memory cache for ephemeral stream URLs (SoundCloud URLs expire quickly)
+    private var streamCache: [String: (url: URL, expires: Date)] = [:]
+
+    func authenticate() async throws {}
+    func logout() async throws {}
+
     func search(query: String) async throws -> [Track] {
-        guard let token = SoundCloudAuth.shared.accessToken else {
-            throw ProviderError.notAuthenticated
+        let sanitized = query
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !sanitized.isEmpty else { return [] }
+
+        let cacheKey = "scsearch_\(sanitized)"
+        if let cached = Cache.shared.getObject(forKey: cacheKey, type: [Track].self) {
+            return cached
         }
-        
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "\(baseURL)/tracks?q=\(encoded)&limit=20") else {
-            throw ProviderError.invalidResponse
-        }
-        
-        var request = URLRequest(url: url)
-        request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ProviderError.networkError("Search failed")
-        }
-        
-        let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        guard let items = json else {
-            throw ProviderError.invalidResponse
-        }
-        
-        return items.compactMap { parseTrack($0) }
+
+        let args = [
+            "--flat-playlist",
+            "--dump-json",
+            "scsearch12:\(sanitized)"
+        ]
+
+        let output = try await YtDlp.run(args, timeout: 25)
+        let tracks = output
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+            .compactMap { track(fromJSONLine: $0) }
+
+        Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
+        return tracks
     }
-    
+
     func getTrack(id: String) async throws -> Track {
-        guard let token = SoundCloudAuth.shared.accessToken else {
-            throw ProviderError.notAuthenticated
-        }
-        
-        guard let url = URL(string: "\(baseURL)/tracks/\(id)") else {
-            throw ProviderError.invalidResponse
-        }
-        
-        var request = URLRequest(url: url)
-        request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        let args = ["--dump-json", "--no-playlist", id]
+        let output = try await YtDlp.run(args, timeout: 30)
+
+        guard let firstLine = output.components(separatedBy: .newlines).first(where: { !$0.isEmpty }),
+              let track = track(fromJSONLine: firstLine) else {
             throw ProviderError.trackNotFound
         }
-        
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let trackDict = json,
-              let track = parseTrack(trackDict) else {
-            throw ProviderError.trackNotFound
-        }
-        
         return track
     }
-    
+
     func getStreamURL(for track: Track) async throws -> URL {
-        guard let token = SoundCloudAuth.shared.accessToken else {
-            throw ProviderError.notAuthenticated
+        if let cached = streamCache[track.id], cached.expires > Date() {
+            return cached.url
         }
-        
-        guard let url = URL(string: "\(baseURL)/tracks/\(track.providerTrackId)/stream") else {
-            throw ProviderError.invalidResponse
-        }
-        
-        var request = URLRequest(url: url)
-        request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+
+        let args = ["-f", audioFormat, "--no-playlist", "--get-url", track.providerTrackId]
+        let output = try await YtDlp.run(args, timeout: 30)
+        let urlString = output.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else {
             throw ProviderError.streamUnavailable
         }
-        
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let streamURLString = json?["http_mp3_128_url"] as? String ?? json?["url"] as? String,
-              let streamURL = URL(string: streamURLString) else {
-            throw ProviderError.streamUnavailable
-        }
-        
-        return streamURL
+
+        // Cache for 3 minutes maximum to ensure we don't serve expired URLs
+        streamCache[track.id] = (url: url, expires: Date().addingTimeInterval(180))
+        return url
     }
-    
-    func getLibrary() async throws -> [Track] {
-        guard let token = SoundCloudAuth.shared.accessToken else {
-            throw ProviderError.notAuthenticated
-        }
-        
-        guard let url = URL(string: "\(baseURL)/me/favorites?limit=50") else {
-            throw ProviderError.invalidResponse
-        }
-        
-        var request = URLRequest(url: url)
-        request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ProviderError.networkError("Failed to fetch library")
-        }
-        
-        let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        guard let items = json else {
-            throw ProviderError.invalidResponse
-        }
-        
-        return items.compactMap { parseTrack($0) }
+
+    func getLibrary() async throws -> [Track] { [] }
+    func getPlaylists() async throws -> [Playlist] { [] }
+    func createPlaylist(name: String) async throws -> Playlist { throw ProviderError.networkError("Not supported") }
+    func addTrackToPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
+    func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
+    func deletePlaylist(playlist: Playlist) async throws { throw ProviderError.networkError("Not supported") }
+
+    // MARK: - Playlist import
+
+    func canImportPlaylist(url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host.contains("soundcloud.com") && url.path.contains("/sets/")
     }
-    
-    func getPlaylists() async throws -> [Playlist] {
-        guard let token = SoundCloudAuth.shared.accessToken else {
-            throw ProviderError.notAuthenticated
+
+    func importPlaylist(url: URL) async throws -> Playlist {
+        // Full (non-flat) extraction on purpose: SoundCloud's flat playlist
+        // entries are bare API references without titles, durations or
+        // artwork — which is why imported sets used to display wrong.
+        // One yt-dlp process resolves the whole set, including the
+        // playlist-level artwork.
+        let args = ["-J", url.absoluteString]
+        let output = try await YtDlp.run(args, timeout: 180)
+
+        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let entries = json["entries"] as? [[String: Any]] else {
+            throw ProviderError.playlistNotFound
         }
-        
-        guard let url = URL(string: "\(baseURL)/me/playlists?limit=50") else {
-            throw ProviderError.invalidResponse
+
+        let tracks = entries.compactMap { track(fromFullJSON: $0) }
+        guard !tracks.isEmpty else {
+            throw ProviderError.playlistNotFound
         }
-        
-        var request = URLRequest(url: url)
-        request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ProviderError.networkError("Failed to fetch playlists")
-        }
-        
-        let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        guard let items = json else {
-            throw ProviderError.invalidResponse
-        }
-        
-        return items.compactMap { parsePlaylist($0) }
-    }
-    
-    private func parseTrack(_ dict: [String: Any]) -> Track? {
-        guard let id = dict["id"] as? Int,
-              let title = dict["title"] as? String,
-              let durationMs = dict["duration"] as? Int else {
-            return nil
-        }
-        
-        var artist = "Unknown Artist"
-        if let user = dict["user"] as? [String: Any],
-           let username = user["username"] as? String {
-            artist = username
-        }
-        
-        var artworkURL: URL?
-        if let artworkURLString = dict["artwork_url"] as? String {
-            artworkURL = URL(string: artworkURLString)
-        }
-        
-        var streamURL: URL?
-        if let streamURLString = dict["stream_url"] as? String {
-            streamURL = URL(string: streamURLString)
-        }
-        
-        return Track(
-            id: "soundcloud-\(id)",
-            title: title,
-            artist: artist,
-            album: "",
-            duration: Double(durationMs) / 1000.0,
-            artworkURL: artworkURL,
-            streamURL: streamURL,
-            providerType: .soundcloud,
-            providerTrackId: String(id)
-        )
-    }
-    
-    private func parsePlaylist(_ dict: [String: Any]) -> Playlist? {
-        guard let id = dict["id"] as? Int,
-              let title = dict["title"] as? String else {
-            return nil
-        }
-        
-        var tracks: [Track] = []
-        if let trackDicts = dict["tracks"] as? [[String: Any]] {
-            tracks = trackDicts.compactMap { parseTrack($0) }
-        }
-        
+
+        let name = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "SoundCloud Set"
+        let playlistId = (json["id"] as? String) ?? (json["id"] as? Int).map(String.init)
+
         return Playlist(
-            id: "soundcloud-\(id)",
-            name: title,
+            id: "sc-playlist-\(playlistId ?? UUID().uuidString)",
+            name: name,
             tracks: tracks,
             providerType: .soundcloud,
-            providerPlaylistId: String(id)
+            providerPlaylistId: playlistId,
+            // The set's own cover from SoundCloud, not the first track's.
+            artworkURL: YtDlp.artworkURL(from: json) ?? tracks.first?.artworkURL,
+            uploader: json["uploader"] as? String,
+            sourceURL: url
         )
+    }
+
+    // MARK: - Parsing
+
+    /// Flat search results: `url` is the track's permalink, which yt-dlp can
+    /// resolve directly when streaming.
+    private func track(fromJSONLine line: String) -> Track? {
+        guard let json = YtDlp.jsonObject(from: line) else { return nil }
+
+        guard let id = trackId(from: json),
+              let title = json["title"] as? String,
+              let urlString = json["url"] as? String else {
+            return nil
+        }
+
+        return Track(
+            id: "sc-\(id)",
+            title: title,
+            artist: YtDlp.artist(from: json),
+            album: "",
+            duration: json["duration"] as? Double ?? 0,
+            artworkURL: YtDlp.artworkURL(from: json),
+            streamURL: nil,
+            providerType: .soundcloud,
+            providerTrackId: urlString
+        )
+    }
+
+    /// Fully-extracted entries (playlist import): `webpage_url` is the
+    /// canonical permalink.
+    private func track(fromFullJSON json: [String: Any]) -> Track? {
+        guard let id = trackId(from: json),
+              let title = json["title"] as? String else {
+            return nil
+        }
+
+        guard let permalink = (json["webpage_url"] as? String) ?? (json["url"] as? String) else {
+            return nil
+        }
+
+        return Track(
+            id: "sc-\(id)",
+            title: title,
+            artist: YtDlp.artist(from: json),
+            album: "",
+            duration: json["duration"] as? Double ?? 0,
+            artworkURL: YtDlp.artworkURL(from: json),
+            streamURL: nil,
+            providerType: .soundcloud,
+            providerTrackId: permalink
+        )
+    }
+
+    /// SoundCloud IDs come back as strings or numbers depending on the code path.
+    private func trackId(from json: [String: Any]) -> String? {
+        if let id = json["id"] as? String { return id }
+        if let id = json["id"] as? Int { return String(id) }
+        return nil
     }
 }

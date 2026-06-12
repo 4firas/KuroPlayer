@@ -1,10 +1,15 @@
 import Foundation
 
-class YouTubeMusicAuth {
+@MainActor class YouTubeMusicAuth {
     static let shared = YouTubeMusicAuth()
     
-    private let clientID = "YOUR_GOOGLE_CLIENT_ID"
-    private let redirectURI = "kuroplayer://youtubemusic-callback"
+    private var clientID: String {
+        UserDefaults.standard.string(forKey: "youtube_client_id") ?? "YOUR_GOOGLE_CLIENT_ID"
+    }
+    private var clientSecret: String {
+        UserDefaults.standard.string(forKey: "youtube_client_secret") ?? "YOUR_GOOGLE_CLIENT_SECRET"
+    }
+    private let redirectURI = "http://127.0.0.1:8080/callback" // Google OAuth macOS desktop standard loopback
     
     var isSignedIn: Bool {
         return true // Search and stream work without OAuth via yt-dlp
@@ -15,8 +20,18 @@ class YouTubeMusicAuth {
         set { UserDefaults.standard.set(newValue, forKey: "youtubemusic_access_token") }
     }
     
+    var refreshToken: String? {
+        get { UserDefaults.standard.string(forKey: "youtubemusic_refresh_token") }
+        set { UserDefaults.standard.set(newValue, forKey: "youtubemusic_refresh_token") }
+    }
+
+    var tokenExpiry: Date? {
+        get { UserDefaults.standard.object(forKey: "youtubemusic_token_expiry") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "youtubemusic_token_expiry") }
+    }
+
     var hasFullAuth: Bool {
-        accessToken != nil
+        return accessToken != nil
     }
     
     func authenticate() async throws {

@@ -1,6 +1,7 @@
 import Foundation
+import CryptoKit
 
-class SoundCloudAuth {
+@MainActor class SoundCloudAuth {
     static let shared = SoundCloudAuth()
     
     private var clientID: String {
@@ -22,6 +23,24 @@ class SoundCloudAuth {
         set { UserDefaults.standard.set(newValue, forKey: "soundcloud_refresh_token") }
     }
     
+    private func generateCodeVerifier() -> String {
+        var buffer = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        return Data(buffer).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func generateCodeChallenge(from verifier: String) -> String {
+        guard let data = verifier.data(using: .utf8) else { return "" }
+        let hash = SHA256.hash(data: data)
+        return Data(hash).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+    
     func authenticate() async throws {
         guard clientID != "YOUR_SOUNDCLOUD_CLIENT_ID", clientSecret != "YOUR_SOUNDCLOUD_CLIENT_SECRET" else {
             throw ProviderError.networkError("Please set your SoundCloud Client ID and Secret in Settings > API Keys.")
@@ -29,7 +48,11 @@ class SoundCloudAuth {
         let encodedScopes = scopes.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let encodedRedirect = redirectURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         
-        let authURLString = "https://secure.soundcloud.com/authorize?client_id=\(clientID)&response_type=code&redirect_uri=\(encodedRedirect)&scope=\(encodedScopes)"
+        let codeVerifier = generateCodeVerifier()
+        let codeChallenge = generateCodeChallenge(from: codeVerifier)
+        let state = UUID().uuidString
+        
+        let authURLString = "https://secure.soundcloud.com/authorize?client_id=\(clientID)&response_type=code&redirect_uri=\(encodedRedirect)&scope=\(encodedScopes)&code_challenge=\(codeChallenge)&code_challenge_method=S256&state=\(state)"
         
         guard let authURL = URL(string: authURLString) else {
             throw ProviderError.invalidResponse
@@ -38,16 +61,18 @@ class SoundCloudAuth {
         let callbackURL = try await AuthManager.shared.startOAuth(url: authURL, callbackScheme: "kuroplayer")
         
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+              let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
+              let returnedState = components.queryItems?.first(where: { $0.name == "state" })?.value,
+              returnedState == state else {
             throw ProviderError.notAuthenticated
         }
         
-        try await exchangeCodeForToken(code)
-        await AuthManager.shared.setAuthenticated(.soundcloud, value: true)
+        try await exchangeCodeForToken(code: code, codeVerifier: codeVerifier)
+        AuthManager.shared.setAuthenticated(.soundcloud, value: true)
     }
     
-    private func exchangeCodeForToken(_ code: String) async throws {
-        guard let tokenURL = URL(string: "https://api.soundcloud.com/oauth2/token") else {
+    private func exchangeCodeForToken(code: String, codeVerifier: String) async throws {
+        guard let tokenURL = URL(string: "https://secure.soundcloud.com/oauth/token") else {
             throw ProviderError.invalidResponse
         }
         
@@ -55,7 +80,7 @@ class SoundCloudAuth {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         
-        let bodyString = "grant_type=authorization_code&client_id=\(clientID)&client_secret=\(clientSecret)&redirect_uri=\(redirectURI)&code=\(code)"
+        let bodyString = "grant_type=authorization_code&client_id=\(clientID)&client_secret=\(clientSecret)&redirect_uri=\(redirectURI)&code_verifier=\(codeVerifier)&code=\(code)"
         request.httpBody = bodyString.data(using: .utf8)
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -77,7 +102,7 @@ class SoundCloudAuth {
     
     func refreshAccessToken() async throws {
         guard let refresh = refreshToken,
-              let tokenURL = URL(string: "https://api.soundcloud.com/oauth2/token") else {
+              let tokenURL = URL(string: "https://secure.soundcloud.com/oauth/token") else {
             throw ProviderError.notAuthenticated
         }
         
@@ -113,3 +138,4 @@ class SoundCloudAuth {
         AuthManager.shared.isAuthenticatedSoundCloud = false
     }
 }
+

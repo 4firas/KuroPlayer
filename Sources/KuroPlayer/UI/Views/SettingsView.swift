@@ -2,25 +2,29 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Settings")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(KurokulaTheme.foreground)
-                .padding(.horizontal)
-                .padding(.top)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // Music Services
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Music Services")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                // Header
+                Text("Settings")
+                    .font(.largeTitle.bold())
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+
+
+
+                // Equalizer
+                EqualizerSettingsSection()
+                    .padding(.horizontal, 24)
+
+                // Music Services
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Music Services")
+                        .font(.title2.bold())
+
+                    VStack(spacing: 12) {
                         ProviderRow(
                             name: "YouTube Music",
                             icon: "play.rectangle",
@@ -32,7 +36,9 @@ struct SettingsView: View {
                                 Task { await viewModel.logoutProvider(.youtubeMusic) }
                             }
                         )
-                        
+
+                        Divider()
+
                         ProviderRow(
                             name: "SoundCloud",
                             icon: "cloud",
@@ -46,111 +52,116 @@ struct SettingsView: View {
                         )
                     }
                     .padding()
-                    .background(KurokulaTheme.cardBackground)
-                    .cornerRadius(8)
-                    .padding(.horizontal)
-                    
-                    // Scrobbling
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Scrobbling")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        ProviderRow(
-                            name: "Last.fm",
-                            icon: "waveform",
-                            isConnected: AuthManager.shared.isAuthenticatedLastFm,
-                            onConnect: {
-                                Task {
-                                    do {
-                                        try await LastFmAuth.shared.authenticate()
-                                        AuthManager.shared.refreshState()
-                                    } catch {
-                                        viewModel.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            },
-                            onDisconnect: {
-                                LastFmAuth.shared.logout()
-                                AuthManager.shared.refreshState()
-                            }
-                        )
-                    }
-                    .padding()
-                    .background(KurokulaTheme.cardBackground)
-                    .cornerRadius(8)
-                    .padding(.horizontal)
-                    
-                    // API Keys
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("API Keys")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        Text("Set your API keys here. Saved locally.")
-                            .font(.caption)
-                            .foregroundColor(KurokulaTheme.gray)
-                        
-                        Group {
-                            Text("Last.fm")
-                                .font(.headline)
-                                .foregroundColor(KurokulaTheme.secondary)
-                            
-                            ApiKeyField(label: "API Key", key: "lastfm_api_key", placeholder: "Get from last.fm/api")
-                            ApiKeyField(label: "Shared Secret", key: "lastfm_api_secret", placeholder: "Get from last.fm/api")
-                        }
-                        
-                        Group {
-                            Text("SoundCloud")
-                                .font(.headline)
-                                .foregroundColor(KurokulaTheme.secondary)
-                            
-                            ApiKeyField(label: "Client ID", key: "soundcloud_client_id", placeholder: "Get from soundcloud.com/developers")
-                            ApiKeyField(label: "Client Secret", key: "soundcloud_client_secret", placeholder: "Get from soundcloud.com/developers")
-                        }
-                    }
-                    .padding()
-                    .background(KurokulaTheme.cardBackground)
-                    .cornerRadius(8)
-                    .padding(.horizontal)
-                    
-                    // About
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("About")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Version")
-                                    .foregroundColor(KurokulaTheme.gray)
-                                Spacer()
-                                Text("1.0.0")
-                                    .foregroundColor(KurokulaTheme.foreground)
-                            }
-                            
-                            HStack {
-                                Text("Theme")
-                                    .foregroundColor(KurokulaTheme.gray)
-                                Spacer()
-                                Text("Kurokula")
-                                    .foregroundColor(KurokulaTheme.secondary)
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(KurokulaTheme.cardBackground)
-                    .cornerRadius(8)
-                    .padding(.horizontal)
+                    .glassCard(cornerRadius: 12)
                 }
-                .padding(.bottom)
+                .padding(.horizontal, 24)
+
+                // Scrobbling
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Scrobbling")
+                        .font(.title2.bold())
+
+                    ProviderRow(
+                        name: "Last.fm",
+                        icon: "waveform",
+                        isConnected: AuthManager.shared.isAuthenticatedLastFm,
+                        onConnect: {
+                            Task {
+                                do {
+                                    try await LastFmAuth.shared.authenticate()
+                                    AuthManager.shared.refreshState()
+                                } catch {
+                                    viewModel.errorMessage = error.localizedDescription
+                                }
+                            }
+                        },
+                        onDisconnect: {
+                            LastFmAuth.shared.logout()
+                            AuthManager.shared.refreshState()
+                        }
+                    )
+                    .padding()
+                    .glassCard(cornerRadius: 12)
+                }
+                .padding(.horizontal, 24)
+
+                // API Keys
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("API Keys")
+                        .font(.title2.bold())
+
+                    Text("Set your API keys here. Saved locally.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    // Last.fm
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Last.fm")
+                            .font(.headline)
+                            .foregroundStyle(Theme.accent)
+
+                        ApiKeyField(label: "API Key", key: "lastfm_api_key", placeholder: "Get from last.fm/api")
+                        ApiKeyField(label: "Shared Secret", key: "lastfm_api_secret", placeholder: "Get from last.fm/api")
+                    }
+                    .padding()
+                    .glassCard(cornerRadius: 12)
+
+                    // SoundCloud
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("SoundCloud")
+                            .font(.headline)
+                            .foregroundStyle(Theme.accent)
+
+                        ApiKeyField(label: "Client ID", key: "soundcloud_client_id", placeholder: "Not needed for anonymous scraping")
+                        ApiKeyField(label: "Client Secret", key: "soundcloud_client_secret", placeholder: "Not needed for anonymous scraping")
+                    }
+                    .padding()
+                    .glassCard(cornerRadius: 12)
+                }
+                .padding(.horizontal, 24)
+
+                // About
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("About")
+                        .font(.title2.bold())
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Version")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            // Seven clicks unlock the Kurokula theme switch.
+                            Text("1.1.0")
+                                .foregroundStyle(.primary)
+                                .onTapGesture {
+                                    theme.registerSecretTap()
+                                }
+                        }
+
+
+
+                        if !YtDlp.isAvailable {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("yt-dlp not found — install with `brew install yt-dlp` to enable streaming")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding()
+                    .glassCard(cornerRadius: 12)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 100)
             }
         }
-        .background(KurokulaTheme.background)
+        .scrollIndicators(.hidden)
+        .animation(.smooth(duration: 0.3), value: theme.justUnlocked)
+        .animation(.smooth(duration: 0.3), value: theme.mode)
     }
+
 }
 
 struct ProviderRow: View {
@@ -159,38 +170,34 @@ struct ProviderRow: View {
     let isConnected: Bool
     let onConnect: () -> Void
     let onDisconnect: () -> Void
-    
+
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
         HStack {
             Image(systemName: icon)
-                .foregroundColor(KurokulaTheme.foreground)
-                .frame(width: 24)
-            
+                .font(.title3)
+                .frame(width: 28)
+
             Text(name)
                 .font(.body)
-                .foregroundColor(KurokulaTheme.foreground)
-            
+
             Spacer()
-            
+
+            Circle()
+                .fill(isConnected ? theme.success : .secondary.opacity(0.3))
+                .frame(width: 8, height: 8)
+
             if isConnected {
-                Circle()
-                    .fill(KurokulaTheme.success)
-                    .frame(width: 8, height: 8)
-                
                 Button("Disconnect", action: onDisconnect)
-                    .buttonStyle(.borderless)
-                    .foregroundColor(KurokulaTheme.error)
+                    .buttonStyle(FlatButtonStyle())
+                    .tint(theme.error)
             } else {
-                Circle()
-                    .fill(KurokulaTheme.gray)
-                    .frame(width: 8, height: 8)
-                
                 Button("Connect", action: onConnect)
-                    .buttonStyle(.borderless)
-                    .foregroundColor(KurokulaTheme.secondary)
+                    .buttonStyle(FlatButtonStyle())
+                    .tint(Theme.accent)
             }
         }
-        .padding(.vertical, 8)
     }
 }
 
@@ -200,34 +207,32 @@ struct ApiKeyField: View {
     let label: String
     let key: String
     let placeholder: String
-    
+
     private var text: Binding<String> {
         Binding(
             get: { UserDefaults.standard.string(forKey: key) ?? "" },
             set: { UserDefaults.standard.set($0, forKey: key) }
         )
     }
-    
+
     init(label: String, key: String, placeholder: String) {
         self.label = label
         self.key = key
         self.placeholder = placeholder
     }
-    
+
     var body: some View {
         HStack {
             Text(label)
                 .font(.caption)
-                .foregroundColor(KurokulaTheme.gray)
+                .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            
+
             SecureField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.caption)
-                .foregroundColor(KurokulaTheme.foreground)
-                .padding(6)
-                .background(KurokulaTheme.background)
-                .cornerRadius(4)
         }
+        .padding(8)
+        .glassCard(cornerRadius: 6)
     }
 }

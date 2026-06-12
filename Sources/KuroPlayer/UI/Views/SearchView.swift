@@ -2,87 +2,142 @@ import SwiftUI
 
 struct SearchView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+    @FocusState private var isSearchFocused: Bool
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Search")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-            
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(KurokulaTheme.gray)
-                
-                TextField("Search tracks...", text: $viewModel.searchText)
-                    .textFieldStyle(.plain)
-                    .foregroundColor(KurokulaTheme.foreground)
-                    .onChange(of: viewModel.searchText) { newValue in
-                        Task { await viewModel.search(query: newValue) }
-                    }
-                
-                if !viewModel.searchText.isEmpty {
-                    Button(action: { viewModel.searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(KurokulaTheme.gray)
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-            .padding(12)
-            .background(KurokulaTheme.cardBackground)
-            .cornerRadius(8)
-            .padding(.horizontal)
-            
-            if viewModel.isSearching {
-                VStack {
-                    ProgressView()
-                    Text("Searching...")
-                        .foregroundColor(KurokulaTheme.gray)
-                }
+        ZStack(alignment: .top) {
+            resultsContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.searchText.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 60))
-                        .foregroundColor(KurokulaTheme.gray)
-                    
-                    Text("Search across all your connected services")
-                        .font(.title3)
-                        .foregroundColor(KurokulaTheme.gray)
+
+            searchField
+        }
+        .onAppear {
+            isSearchFocused = true
+        }
+    }
+
+    // MARK: Search Field
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+
+            TextField("Search tracks...", text: $viewModel.searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($isSearchFocused)
+                .onChange(of: viewModel.searchText) { _, newValue in
+                    viewModel.searchTextChanged(newValue)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.searchResults.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "music.note.slash")
-                        .font(.system(size: 60))
-                        .foregroundColor(KurokulaTheme.gray)
-                    
-                    Text("No results found")
-                        .font(.title3)
-                        .foregroundColor(KurokulaTheme.gray)
+
+            if !viewModel.searchText.isEmpty {
+                Button(action: { viewModel.searchText = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(viewModel.searchResults) { track in
-                            Button(action: {
-                                viewModel.play(track: track)
-                            }) {
-                                TrackRowContent(track: track)
-                            }
-                            .buttonStyle(TrackRowButtonStyle(isActive: viewModel.currentTrack?.id == track.id))
-                        }
-                    }
-                    .padding(.horizontal)
-                }
+                .buttonStyle(.plain)
             }
         }
-        .background(KurokulaTheme.background)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: .black.opacity(0.35), radius: 12, y: -2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+    }
+
+    // MARK: Results
+
+    @ViewBuilder
+    private var resultsContent: some View {
+        if viewModel.isSearching {
+            VStack {
+                ProgressView()
+                Text("Searching...")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if viewModel.searchText.isEmpty {
+            VStack(spacing: 16) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 60))
+                    .foregroundStyle(.secondary)
+                Text("Search across all your connected services")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if viewModel.searchResults.isEmpty {
+            VStack(spacing: 16) {
+                Image(systemName: "music.note.slash")
+                    .font(.system(size: 60))
+                    .foregroundStyle(.secondary)
+                Text("No results found")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                Color.clear.frame(height: 70)
+
+                LazyVStack(spacing: 1) {
+                    ForEach(viewModel.searchResults) { track in
+                        Button(action: {
+                            viewModel.play(track: track)
+                        }) {
+                            TrackRowContent(track: track)
+                        }
+                        .buttonStyle(.plain)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+                        .contentShape(.rect(cornerRadius: 8))
+                        .contextMenu {
+                            Button("Play") { viewModel.play(track: track) }
+                            Button("Play Next") { viewModel.playNext(track) }
+                            Button("Add to Queue") { viewModel.addToQueue(track) }
+                            Divider()
+                            Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
+                                viewModel.toggleLike(track)
+                            }
+                            if !viewModel.playlists.isEmpty {
+                                Divider()
+                                Menu("Add to Playlist") {
+                                    ForEach(viewModel.playlists) { playlist in
+                                        Button(playlist.name) {
+                                            viewModel.addToPlaylist(id: playlist.id, track: track)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 100)
+            }
+            .scrollIndicators(.hidden)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black, location: 0.05),
+                        .init(color: .black, location: 0.95),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
     }
 }

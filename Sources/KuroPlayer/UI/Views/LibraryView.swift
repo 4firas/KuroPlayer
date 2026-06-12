@@ -2,90 +2,78 @@ import SwiftUI
 
 struct LibraryView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+    @Namespace private var glassNamespace
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
             HStack {
                 Text("Your Library")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-                
+                    .font(.largeTitle.bold())
+
                 Spacer()
-                
+
                 Button(action: {
                     Task { await viewModel.loadLibrary() }
                 }) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.title3)
-                        .foregroundColor(KurokulaTheme.foreground)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.flat)
             }
-            .padding(.horizontal)
-            .padding(.top)
-            
+            .padding(24)
+
             if viewModel.libraryTracks.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 60))
-                        .foregroundColor(KurokulaTheme.gray)
-                    
+                        .foregroundStyle(.secondary)
+
                     Text("Your library is empty")
                         .font(.title2)
-                        .foregroundColor(KurokulaTheme.gray)
-                    
-                    Text("Connect to YouTube Music or SoundCloud to see your saved tracks")
+                        .foregroundStyle(.secondary)
+
+                    Text("Add local music files or connect to streaming services")
                         .font(.body)
-                        .foregroundColor(KurokulaTheme.gray)
+                        .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(viewModel.libraryTracks) { track in
+                        ForEach(Array(viewModel.libraryTracks.enumerated()), id: \.element.id) { index, track in
                             Button(action: {
-                                viewModel.setQueue(viewModel.libraryTracks)
+                                // Set queue from this track onward
+                                let remaining = Array(viewModel.libraryTracks[index...])
+                                viewModel.setQueue(remaining)
                                 viewModel.play(track: track)
                             }) {
                                 TrackRowContent(track: track)
                             }
-                            .buttonStyle(TrackRowButtonStyle(isActive: viewModel.currentTrack?.id == track.id))
+                            .buttonStyle(.plain)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+                            .contextMenu {
+                                trackContextMenu(track: track, index: index)
+                            }
                         }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 24)
                 }
+                .scrollIndicators(.hidden)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.05),
+                            .init(color: .black, location: 0.95),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             }
         }
-        .background(KurokulaTheme.background)
-    }
-}
-
-// MARK: - Track Row Button Style
-
-struct TrackRowButtonStyle: ButtonStyle {
-    let isActive: Bool
-    
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(activeBackground(configuration.isPressed))
-            )
-            .scaleEffect(configuration.isPressed ? 0.985 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: configuration.isPressed)
-            .animation(.easeInOut(duration: 0.15), value: isActive)
-    }
-    
-    private func activeBackground(_ isPressed: Bool) -> Color {
-        if isPressed {
-            return KurokulaTheme.hoverBackground.opacity(0.6)
-        }
-        if isActive {
-            return KurokulaTheme.hoverBackground
-        }
-        return Color.clear
     }
 }
 
@@ -93,48 +81,101 @@ struct TrackRowButtonStyle: ButtonStyle {
 
 struct TrackRowContent: View {
     let track: Track
-    
+    @EnvironmentObject var viewModel: PlayerViewModel
+
+    private var isActive: Bool {
+        viewModel.currentTrack?.id == track.id
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: track.artworkURL) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(KurokulaTheme.gray.opacity(0.3))
+            // Artwork
+            ZStack {
+                AsyncImage(url: track.artworkURL) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Image(systemName: "music.note")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .background(.quaternary)
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(.rect(cornerRadius: 6))
+
+                if isActive {
+                    NowPlayingIndicator(isPlaying: viewModel.isPlaying)
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.5))
+                        .clipShape(.rect(cornerRadius: 6))
+                }
             }
-            .frame(width: 44, height: 44)
-            .cornerRadius(4)
-            
+
+            // Track info
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
-                    .font(.body)
-                    .foregroundColor(KurokulaTheme.foreground)
+                    .font(.body.weight(isActive ? .semibold : .regular))
                     .lineLimit(1)
-                
+
                 Text(track.artist)
                     .font(.caption)
-                    .foregroundColor(KurokulaTheme.gray)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            
+
             Spacer()
-            
+
+            // Like indicator
+            if viewModel.isLiked(track) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.accent)
+            }
+
+            // Provider badge
             Text(track.providerType.displayName)
                 .font(.caption2)
-                .foregroundColor(KurokulaTheme.gray)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(KurokulaTheme.gray.opacity(0.2))
-                .cornerRadius(4)
-            
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.primary.opacity(0.05)))
+
+            // Duration
             Text(track.formattedDuration)
-                .font(.caption)
-                .foregroundColor(KurokulaTheme.gray)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(.rect(cornerRadius: 8))
+    }
+}
+
+extension LibraryView {
+    @ViewBuilder
+    private func trackContextMenu(track: Track, index: Int) -> some View {
+        Button("Play") {
+            let remaining = Array(viewModel.libraryTracks[index...])
+            viewModel.setQueue(remaining)
+            viewModel.play(track: track)
+        }
+        Button("Play Next") { viewModel.playNext(track) }
+        Button("Add to Queue") { viewModel.addToQueue(track) }
+        Divider()
+        Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
+            viewModel.toggleLike(track)
+        }
+        if !viewModel.playlists.isEmpty {
+            Divider()
+            Menu("Add to Playlist") {
+                ForEach(viewModel.playlists) { playlist in
+                    Button(playlist.name) {
+                        viewModel.addToPlaylist(id: playlist.id, track: track)
+                    }
+                }
+            }
+        }
     }
 }

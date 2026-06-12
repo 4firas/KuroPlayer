@@ -1,13 +1,19 @@
 import Foundation
 
-enum PlaybackStatus {
+enum PlaybackStatus: Codable {
     case stopped
     case playing
     case paused
     case loading
 }
 
-struct PlaybackState {
+enum RepeatMode: Int, Codable {
+    case off
+    case all
+    case one
+}
+
+struct PlaybackState: Codable {
     var currentTrack: Track?
     var queue: [Track] = []
     var currentIndex: Int = 0
@@ -16,12 +22,8 @@ struct PlaybackState {
     var volume: Float = 0.7
     var isShuffled: Bool = false
     var repeatMode: RepeatMode = .off
-
-    enum RepeatMode {
-        case off
-        case all
-        case one
-    }
+    /// Original queue order, kept while shuffle is on so it can be restored.
+    var unshuffledQueue: [Track]? = nil
 
     var nextTrack: Track? {
         guard !queue.isEmpty else { return nil }

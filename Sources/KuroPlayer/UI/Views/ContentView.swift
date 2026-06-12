@@ -1,220 +1,383 @@
 import SwiftUI
+import AppKit
+
+// MARK: - Content View
+//
+// Custom sidebar + detail layout. Sidebar sits flush next to the content.
+// Player bar floats at the bottom spanning the full content width.
+
+class ContentViewState: ObservableObject {
+    @Published var sidebarWidth: CGFloat = 220
+    @Published var isDraggingSidebar = false
+}
 
 struct ContentView: View {
-    @StateObject private var viewModel = PlayerViewModel()
-    @StateObject private var authManager = AuthManager.shared
-    
+    @EnvironmentObject var viewModel: PlayerViewModel
+    @StateObject private var state = ContentViewState()
+
+    private let minSidebar: CGFloat = 180
+    private let maxSidebar: CGFloat = 320
+
     var body: some View {
-        HStack(spacing: 0) {
-            SidebarView(selectedView: $viewModel.selectedView)
-                .environmentObject(viewModel)
-            
-            VStack(spacing: 0) {
-                ZStack {
-                    switch viewModel.selectedView {
-                    case .home:
-                        HomeView()
-                    case .search:
-                        SearchView()
-                    case .library:
-                        LibraryView()
-                    case .settings:
-                        SettingsView()
+        ZStack(alignment: .bottom) {
+            HStack(spacing: 0) {
+                // Sidebar
+                SidebarView()
+                    .environmentObject(viewModel)
+                    .frame(width: state.sidebarWidth)
+                    .background(.thinMaterial)
+
+                // Resize handle
+                Rectangle()
+                    .fill(.clear)
+                    .frame(width: 4)
+                    .contentShape(.rect)
+                    .onHover { state.isDraggingSidebar = $0 }
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                state.sidebarWidth = max(minSidebar, min(maxSidebar, state.sidebarWidth + value.translation.width))
+                            }
+                    )
+                    .cursor(state.isDraggingSidebar ? .resizeLeftRight : .arrow)
+
+                // Detail content
+                VStack(spacing: 0) {
+                    ZStack {
+                        switch viewModel.selectedView {
+                        case .home:
+                            HomeView()
+                        case .search:
+                            SearchView()
+                        case .library:
+                            LibraryView()
+                        case .lyrics:
+                            LyricsView()
+                        case .queue:
+                            QueueView()
+                        case .likedSongs:
+                            LikedSongsView()
+                        case .settings:
+                            SettingsView()
+                        case .playlistDetail:
+                            PlaylistDetailView()
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+                    .animation(.smooth(duration: 0.2), value: viewModel.selectedView)
+
+                    // Player bar
+                    PlayerBarView()
+                        .environmentObject(viewModel)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                PlayerBarView()
-                    .environmentObject(viewModel)
+            }
+
+            // Error banner
+            if let errorMessage = viewModel.errorMessage {
+                ErrorBanner(message: errorMessage) {
+                    withAnimation(.smooth(duration: 0.25)) {
+                        viewModel.dismissError()
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity.combined(with: .scale(scale: 0.9))
+                ))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            
+            // MARK: Custom Overlays
+            
+            if viewModel.showNewPlaylist {
+                KuroAlert(
+                    title: "New Playlist",
+                    placeholder: "Playlist name",
+                    text: $viewModel.newPlaylistName,
+                    primaryButtonTitle: "Create",
+                    primaryAction: {
+                        let name = viewModel.newPlaylistName.trimmingCharacters(in: .whitespaces)
+                        if !name.isEmpty {
+                            viewModel.createPlaylist(name: name)
+                        }
+                        viewModel.newPlaylistName = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.showNewPlaylist = false
+                        }
+                    },
+                    cancelAction: {
+                        viewModel.newPlaylistName = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.showNewPlaylist = false
+                        }
+                    }
+                )
+                .zIndex(100)
+            }
+            
+            if viewModel.showImportPlaylist {
+                KuroAlert(
+                    title: "Import Playlist",
+                    placeholder: "SoundCloud or YouTube Music URL",
+                    text: $viewModel.importPlaylistURL,
+                    primaryButtonTitle: "Import",
+                    primaryAction: {
+                        let url = viewModel.importPlaylistURL.trimmingCharacters(in: .whitespaces)
+                        if !url.isEmpty {
+                            viewModel.importPlaylist(from: url)
+                        }
+                        viewModel.importPlaylistURL = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.showImportPlaylist = false
+                        }
+                    },
+                    cancelAction: {
+                        viewModel.importPlaylistURL = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.showImportPlaylist = false
+                        }
+                    }
+                )
+                .zIndex(100)
+            }
+            
+            if viewModel.renamingPlaylistId != nil {
+                KuroAlert(
+                    title: "Rename Playlist",
+                    placeholder: "New name",
+                    text: $viewModel.renameText,
+                    primaryButtonTitle: "Rename",
+                    primaryAction: {
+                        if let id = viewModel.renamingPlaylistId {
+                            let name = viewModel.renameText.trimmingCharacters(in: .whitespaces)
+                            if !name.isEmpty {
+                                viewModel.renamePlaylist(id: id, name: name)
+                            }
+                        }
+                        viewModel.renameText = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.renamingPlaylistId = nil
+                        }
+                    },
+                    cancelAction: {
+                        viewModel.renameText = ""
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.renamingPlaylistId = nil
+                        }
+                    }
+                )
+                .zIndex(100)
             }
         }
         .environmentObject(viewModel)
-        .frame(minWidth: 1000, minHeight: 600)
-        .background(KurokulaTheme.background)
-        .onAppear {
-            Task {
-                await viewModel.loadLibrary()
-            }
+        .animation(.smooth(duration: 0.3), value: viewModel.errorMessage)
+        .background(WindowAccessor())
+    }
+}
+
+// MARK: - Window Accessor
+
+struct WindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            view.window?.titlebarSeparatorStyle = .none
         }
-        .alert("Error", isPresented: Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )) {
-            Button("OK") { viewModel.dismissError() }
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+// MARK: - Cursor modifier
+
+private struct CursorModifier: ViewModifier {
+    let cursor: NSCursor
+
+    func body(content: Content) -> some View {
+        content.onHover { inside in
+            if inside { cursor.push() }
+            else { NSCursor.pop() }
         }
     }
 }
 
-struct HomeView: View {
-    @EnvironmentObject var viewModel: PlayerViewModel
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack {
-                Text("Home")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundColor(KurokulaTheme.foreground)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // Quick actions
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Quick Start")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        HStack(spacing: 12) {
-                            QuickActionButton(icon: "magnifyingglass", title: "Search", color: KurokulaTheme.accent)
-                            QuickActionButton(icon: "music.note.list", title: "Library", color: KurokulaTheme.secondary)
-                            QuickActionButton(icon: "waveform", title: "Radio", color: KurokulaTheme.success)
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    // Recently played
-                    if !viewModel.libraryTracks.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("From Your Library")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(KurokulaTheme.foreground)
-                            
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(viewModel.libraryTracks.prefix(10)) { track in
-                                        TrackCard(track: track)
-                                            .onTapGesture {
-                                                viewModel.play(track: track)
-                                            }
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                        }
-                    }
-                    
-                    // Connected services status
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Connected Services")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(KurokulaTheme.foreground)
-                        
-                        HStack(spacing: 12) {
-                            ServiceStatusCard(
-                                name: "YouTube Music",
-                                icon: "play.rectangle",
-                                isConnected: AuthManager.shared.isAuthenticatedYouTubeMusic
-                            )
-                            
-                            ServiceStatusCard(
-                                name: "SoundCloud",
-                                icon: "cloud",
-                                isConnected: AuthManager.shared.isAuthenticatedSoundCloud
-                            )
-                            
-                            ServiceStatusCard(
-                                name: "Last.fm",
-                                icon: "waveform",
-                                isConnected: AuthManager.shared.isAuthenticatedLastFm
-                            )
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.bottom)
-            }
-        }
-        .background(KurokulaTheme.background)
+extension View {
+    func cursor(_ cursor: NSCursor) -> some View {
+        modifier(CursorModifier(cursor: cursor))
     }
 }
+
+// MARK: - Error Banner
+
+struct ErrorBanner: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(Theme.error)
+            Text(message)
+                .foregroundColor(.primary)
+                .font(.system(size: 13, weight: .medium))
+            Spacer()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        )
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                withAnimation(.smooth(duration: 0.25)) {
+                    onDismiss()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Home View
+
+struct HomeView: View {
+    @EnvironmentObject var viewModel: PlayerViewModel
+    @Namespace private var nowPlayingNamespace
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                // Header
+                Text(viewModel.playlists.isEmpty ? "Welcome back" : "My Playlists")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.primary)
+
+                // Playlists grid
+                if !viewModel.playlists.isEmpty {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 16, alignment: .top)
+                        ],
+                        spacing: 20
+                    ) {
+                        ForEach(viewModel.playlists) { playlist in
+                            let track = playlist.tracks.first
+                            PlaylistCard(
+                                title: playlist.name,
+                                subtitle: track.flatMap { "\($0.artist) · \(playlist.trackCount) songs" }
+                                    ?? "\(playlist.trackCount) songs",
+                                artworkURL: track?.artworkURL,
+                                fallbackSymbol: "music.note.list",
+                                fallbackTint: Theme.accent,
+                                isExplicit: false,
+                                trackCount: playlist.trackCount,
+                                isPlaying: viewModel.currentTrack?.id == track?.id && viewModel.isPlaying
+                            )
+                            .onTapGesture {
+                                viewModel.selectedPlaylistId = playlist.id
+                                viewModel.selectedView = .playlistDetail
+                            }
+                            // removed glassEffectID
+                        }
+                    }
+                }
+
+                // Quick Start
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Quick Start")
+                        .font(.title2.bold())
+
+                    HStack(spacing: 12) {
+                        QuickActionButton(icon: "magnifyingglass", title: "Search", tint: Theme.accent) {
+                            viewModel.selectedView = .search
+                        }
+                        QuickActionButton(icon: "music.note.list", title: "Library", tint: Theme.accent) {
+                            viewModel.selectedView = .library
+                        }
+                        QuickActionButton(icon: "list.bullet", title: "Queue", tint: Theme.accent) {
+                            viewModel.selectedView = .queue
+                        }
+                        QuickActionButton(icon: "gearshape.fill", title: "Settings", tint: Theme.accent) {
+                            viewModel.selectedView = .settings
+                        }
+                    }
+                }
+
+                // yt-dlp status
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Streaming")
+                        .font(.title2.bold())
+
+                    HStack {
+                        Image(systemName: YtDlp.isAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(YtDlp.isAvailable ? Theme.success : Theme.error)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("yt-dlp")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(YtDlp.isAvailable ? "Installed — YouTube Music & SoundCloud are ready" : "Not found — Install via: brew install yt-dlp")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 100)
+        }
+        .scrollIndicators(.hidden)
+    }
+}
+
+// MARK: - Quick Action Button
 
 struct QuickActionButton: View {
     let icon: String
     let title: String
-    let color: Color
-    
+    let tint: Color
+    let action: () -> Void
+
     var body: some View {
-        Button(action: {}) {
-            VStack(spacing: 8) {
+        Button(action: action) {
+            VStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title2)
+                    .font(.system(size: 32))
+                    .foregroundStyle(tint)
                 Text(title)
-                    .font(.caption)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
             }
-            .foregroundColor(color)
-            .frame(width: 100, height: 80)
-            .glassSurface(cornerRadius: 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 120)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(tint.opacity(0.3), lineWidth: 1)
+            )
         }
-        .buttonStyle(.borderless)
-    }
-}
-
-struct TrackCard: View {
-    let track: Track
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            AsyncImage(url: track.artworkURL) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle()
-                    .fill(KurokulaTheme.gray.opacity(0.3))
-            }
-            .frame(width: 140, height: 140)
-            .cornerRadius(4)
-            
-            Text(track.title)
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(KurokulaTheme.foreground)
-                .lineLimit(1)
-            
-            Text(track.artist)
-                .font(.caption2)
-                .foregroundColor(KurokulaTheme.gray)
-                .lineLimit(1)
-        }
-        .frame(width: 140)
-    }
-}
-
-struct ServiceStatusCard: View {
-    let name: String
-    let icon: String
-    let isConnected: Bool
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(isConnected ? KurokulaTheme.success : KurokulaTheme.gray)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(KurokulaTheme.foreground)
-                
-                Text(isConnected ? "Connected" : "Not connected")
-                    .font(.caption)
-                    .foregroundColor(isConnected ? KurokulaTheme.success : KurokulaTheme.gray)
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .frame(maxWidth: .infinity)
-        .background(KurokulaTheme.cardBackground)
-        .cornerRadius(8)
+        .buttonStyle(.plain)
     }
 }
