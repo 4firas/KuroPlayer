@@ -3,7 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
     @StateObject private var authManager = AuthManager.shared
-    
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
         NavigationSplitView {
             SidebarView()
@@ -20,16 +21,20 @@ struct ContentView: View {
                         SearchView()
                     case .library:
                         LibraryView()
+                    case .playlists:
+                        PlaylistsView()
                     case .queue:
                         QueueView()
                     case .settings:
                         SettingsView()
+                    case .playlist(let playlistID):
+                        PlaylistDetailView(playlistID: playlistID)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .backgroundExtensionEffect()
                 .animation(.smooth(duration: 0.3), value: viewModel.selectedView)
-                
+
                 // Player bar
                 PlayerBarView()
                     .environmentObject(viewModel)
@@ -38,6 +43,8 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
         .environmentObject(viewModel)
         .frame(minWidth: 1000, minHeight: 600)
+        .preferredColorScheme(theme.colorScheme)
+        .tint(theme.accent)
         .onAppear {
             Task {
                 await viewModel.loadLibrary()
@@ -65,7 +72,7 @@ struct ContentView: View {
 struct ErrorBanner: View {
     let message: String
     let onDismiss: () -> Void
-    
+
     var body: some View {
         HStack {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -81,7 +88,6 @@ struct ErrorBanner: View {
         }
         .padding()
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
-        .padding(.horizontal, 20)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 withAnimation(.smooth(duration: 0.25)) {
@@ -94,19 +100,20 @@ struct ErrorBanner: View {
 
 struct HomeView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 // Hero section with background extension
                 ZStack(alignment: .bottomLeading) {
                     LinearGradient(
-                        colors: [KurokulaTheme.accent.opacity(0.3), KurokulaTheme.background],
+                        colors: [theme.accent.opacity(0.3), theme.heroBackground],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                     .frame(height: 200)
-                    
+
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Welcome back")
                             .font(.title2)
@@ -117,34 +124,34 @@ struct HomeView: View {
                     .padding(24)
                 }
                 .backgroundExtensionEffect()
-                
+
                 // Quick actions with glass
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Quick Start")
                         .font(.title2.bold())
-                    
+
                     GlassEffectContainer(spacing: 16) {
                         HStack(spacing: 16) {
-                            QuickActionButton(icon: "magnifyingglass", title: "Search", tint: KurokulaTheme.accent) {
+                            QuickActionButton(icon: "magnifyingglass", title: "Search", tint: theme.accent) {
                                 viewModel.selectedView = .search
                             }
-                            QuickActionButton(icon: "music.note.list", title: "Library", tint: KurokulaTheme.secondary) {
-                                viewModel.selectedView = .library
+                            QuickActionButton(icon: "square.grid.2x2", title: "Playlists", tint: theme.secondaryAccent) {
+                                viewModel.selectedView = .playlists
                             }
-                            QuickActionButton(icon: "list.bullet", title: "Queue", tint: KurokulaTheme.success) {
-                                viewModel.selectedView = .queue
+                            QuickActionButton(icon: "music.note.list", title: "Library", tint: theme.success) {
+                                viewModel.selectedView = .library
                             }
                         }
                     }
                 }
                 .padding(.horizontal, 24)
-                
+
                 // Recently played
                 if !viewModel.libraryTracks.isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("From Your Library")
                             .font(.title2.bold())
-                        
+
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 16) {
                                 ForEach(viewModel.libraryTracks.prefix(10)) { track in
@@ -155,12 +162,12 @@ struct HomeView: View {
                         }
                     }
                 }
-                
+
                 // Services status
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Connected Services")
                         .font(.title2.bold())
-                    
+
                     GlassEffectContainer(spacing: 12) {
                         VStack(spacing: 12) {
                             ServiceStatusCard(
@@ -185,6 +192,7 @@ struct HomeView: View {
                 .padding(.bottom, 100) // Space for player bar
             }
         }
+        .scrollIndicators(.hidden)
     }
 }
 
@@ -193,7 +201,7 @@ struct QuickActionButton: View {
     let title: String
     let tint: Color
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 12) {
@@ -215,7 +223,7 @@ struct QuickActionButton: View {
 struct TrackCard: View {
     let track: Track
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+
     var body: some View {
         Button(action: {
             viewModel.play(track: track)
@@ -236,7 +244,7 @@ struct TrackCard: View {
                     }
                     .frame(width: 160, height: 160)
                     .clipShape(.rect(cornerRadius: 12))
-                    
+
                     if viewModel.currentTrack?.id == track.id {
                         NowPlayingIndicator(isPlaying: viewModel.isPlaying)
                             .frame(width: 160, height: 160)
@@ -244,7 +252,7 @@ struct TrackCard: View {
                             .clipShape(.rect(cornerRadius: 12))
                     }
                 }
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(.headline)
@@ -266,28 +274,29 @@ struct ServiceStatusCard: View {
     let name: String
     let icon: String
     let isConnected: Bool
-    
+
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundStyle(isConnected ? KurokulaTheme.success : .secondary)
+                .foregroundStyle(isConnected ? theme.success : .secondary)
                 .frame(width: 32)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
                     .font(.headline)
                 Text(isConnected ? "Connected" : "Not connected")
                     .font(.caption)
-                    .foregroundColor(isConnected ? KurokulaTheme.success : .secondary)
+                    .foregroundColor(isConnected ? theme.success : .secondary)
             }
-            
+
             Spacer()
-            
+
             Circle()
-                .fill(isConnected ? KurokulaTheme.success : .secondary.opacity(0.3))
+                .fill(isConnected ? theme.success : .secondary.opacity(0.3))
                 .frame(width: 8, height: 8)
-                .glassEffect(.regular, in: .circle)
         }
         .padding()
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))

@@ -10,6 +10,7 @@ struct KuroPlayerApp: App {
             if let viewModel = appState.viewModel {
                 ContentView()
                     .environmentObject(viewModel)
+                    .environmentObject(ThemeManager.shared)
                     .transition(.opacity)
             } else {
                 ProgressView("Loading KuroPlayer...")
@@ -44,9 +45,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState = AppState()
         
         Task { @MainActor in
+            // Pushes persisted EQ settings to the audio bridge before the
+            // first track plays — without this an enabled EQ stays silent
+            // until the Settings view is opened.
+            _ = EqualizerManager.shared
+
             engine = PlaybackEngine()
             let vm = PlayerViewModel(playbackEngine: engine)
-            
+
             MediaKeyHandler.shared.setup(engine: engine)
 
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -58,7 +64,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover = NSPopover()
             popover.contentSize = NSSize(width: 250, height: 150)
             popover.behavior = .transient
-            popover.contentViewController = NSHostingController(rootView: MiniPlayerView().environmentObject(vm))
+            popover.contentViewController = NSHostingController(
+                rootView: MiniPlayerView()
+                    .environmentObject(vm)
+                    .environmentObject(ThemeManager.shared)
+            )
             
             // Set viewModel last to trigger UI update
             appState.viewModel = vm

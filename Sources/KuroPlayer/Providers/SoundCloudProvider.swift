@@ -3,59 +3,72 @@ import Foundation
 @MainActor class SoundCloudProvider: MusicProvider {
     var type: MusicProviderType { .soundcloud }
     var isAuthenticated: Bool { true }
-    
-    private let ytdlpPath = "/opt/homebrew/bin/yt-dlp"
-    
+
+    /// SoundCloud serves both progressive MP3 and HLS. Progressive starts
+    /// faster in AVPlayer and is required for the parametric EQ tap, so
+    /// prefer it explicitly — this also makes load times consistent with
+    /// the YouTube Music provider.
+    private let audioFormat = "bestaudio[protocol^=http]/bestaudio/best"
+
     func authenticate() async throws {}
     func logout() async throws {}
-    
+
     func search(query: String) async throws -> [Track] {
-        let cacheKey = "scsearch_\(query)"
+        let sanitized = query
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !sanitized.isEmpty else { return [] }
+
+        let cacheKey = "scsearch_\(sanitized)"
         if let cached = Cache.shared.getObject(forKey: cacheKey, type: [Track].self) {
             return cached
         }
-        
-        guard FileManager.default.fileExists(atPath: ytdlpPath) else {
-            throw ProviderError.networkError("yt-dlp not found at \(ytdlpPath)")
-        }
-        
-        let sanitized = query.replacingOccurrences(of: "\"", with: "\\\"")
+
         let args = [
             "--flat-playlist",
             "--dump-json",
-            "--no-playlist",
-            "scsearch20:\(sanitized)"
+            "scsearch12:\(sanitized)"
         ]
-        
-        let output = try await runYtDlp(args: args)
-        let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        let tracks = lines.compactMap { parseSearchResult($0) }
+
+        let output = try await YtDlp.run(args, timeout: 25)
+        let tracks = output
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+            .compactMap { track(fromJSONLine: $0) }
+
         Cache.shared.setObject(tracks, forKey: cacheKey, ttl: 1800)
         return tracks
     }
-    
+
     func getTrack(id: String) async throws -> Track {
-        let args = ["--dump-json", id]
-        let output = try await runYtDlp(args: args)
-        
+        let args = ["--dump-json", "--no-playlist", id]
+        let output = try await YtDlp.run(args, timeout: 30)
+
         guard let firstLine = output.components(separatedBy: .newlines).first(where: { !$0.isEmpty }),
-              let track = parseSearchResult(firstLine) else {
+              let track = track(fromJSONLine: firstLine) else {
             throw ProviderError.trackNotFound
         }
         return track
     }
-    
+
     func getStreamURL(for track: Track) async throws -> URL {
-        let args = ["-f", "bestaudio/best", "--get-url", track.providerTrackId]
-        let output = try await runYtDlp(args: args)
+        let cacheKey = "stream_\(track.id)"
+        if let cached = Cache.shared.getObject(forKey: cacheKey, type: URL.self) {
+            return cached
+        }
+
+        let args = ["-f", audioFormat, "--no-playlist", "--get-url", track.providerTrackId]
+        let output = try await YtDlp.run(args, timeout: 30)
         let urlString = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        guard let url = URL(string: urlString) else {
+
+        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else {
             throw ProviderError.streamUnavailable
         }
+
+        Cache.shared.setObject(url, forKey: cacheKey, ttl: 1200)
         return url
     }
-    
+
     func getLibrary() async throws -> [Track] { [] }
     func getPlaylists() async throws -> [Playlist] { [] }
     func createPlaylist(name: String) async throws -> Playlist { throw ProviderError.networkError("Not supported") }
@@ -63,109 +76,103 @@ import Foundation
     func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws { throw ProviderError.networkError("Not supported") }
     func deletePlaylist(playlist: Playlist) async throws { throw ProviderError.networkError("Not supported") }
 
-    // MARK: - Thread-safe data buffer
-    
-    private final class DataBuffer: @unchecked Sendable {
-        private var data = Data()
-        private let lock = NSLock()
-        
-        func append(_ newData: Data) {
-            lock.lock()
-            data.append(newData)
-            lock.unlock()
-        }
-        
-        func getData() -> Data {
-            lock.lock()
-            defer { lock.unlock() }
-            return data
-        }
+    // MARK: - Playlist import
+
+    func canImportPlaylist(url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host.contains("soundcloud.com") && url.path.contains("/sets/")
     }
-    
-    // MARK: - YT-DLP execution
 
-    private func runYtDlp(args: [String]) async throws -> String {
-        let ytdlp = self.ytdlpPath
-        return try await withCheckedThrowingContinuation { continuation in
-            Task.detached {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: ytdlp)
-                process.arguments = args
+    func importPlaylist(url: URL) async throws -> Playlist {
+        // Full (non-flat) extraction on purpose: SoundCloud's flat playlist
+        // entries are bare API references without titles, durations or
+        // artwork — which is why imported sets used to display wrong.
+        // One yt-dlp process resolves the whole set, including the
+        // playlist-level artwork.
+        let args = ["-J", url.absoluteString]
+        let output = try await YtDlp.run(args, timeout: 180)
 
-                let stdoutPipe = Pipe()
-                let stderrPipe = Pipe()
-                process.standardOutput = stdoutPipe
-                process.standardError = stderrPipe
-
-                let outputBuffer = DataBuffer()
-                let errorBuffer = DataBuffer()
-
-                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if !data.isEmpty {
-                        outputBuffer.append(data)
-                    }
-                }
-
-                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if !data.isEmpty {
-                        errorBuffer.append(data)
-                    }
-                }
-
-                process.terminationHandler = { proc in
-                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                    stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-                    if proc.terminationStatus == 0 {
-                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
-                        continuation.resume(returning: output)
-                    } else {
-                        let err = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
-                        continuation.resume(throwing: ProviderError.networkError("yt-dlp failed: \(err.prefix(200))"))
-                    }
-                }
-
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(throwing: ProviderError.networkError("Failed to run yt-dlp: \(error.localizedDescription)"))
-                }
-            }
+        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let entries = json["entries"] as? [[String: Any]] else {
+            throw ProviderError.playlistNotFound
         }
+
+        let tracks = entries.compactMap { track(fromFullJSON: $0) }
+        guard !tracks.isEmpty else {
+            throw ProviderError.playlistNotFound
+        }
+
+        let name = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "SoundCloud Set"
+        let playlistId = (json["id"] as? String) ?? (json["id"] as? Int).map(String.init)
+
+        return Playlist(
+            id: "sc-playlist-\(playlistId ?? UUID().uuidString)",
+            name: name,
+            tracks: tracks,
+            providerType: .soundcloud,
+            providerPlaylistId: playlistId,
+            // The set's own cover from SoundCloud, not the first track's.
+            artworkURL: YtDlp.artworkURL(from: json) ?? tracks.first?.artworkURL,
+            uploader: json["uploader"] as? String,
+            sourceURL: url
+        )
     }
-    
-    private func parseSearchResult(_ jsonString: String) -> Track? {
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        
-        guard let id = json["id"] as? String,
+
+    // MARK: - Parsing
+
+    /// Flat search results: `url` is the track's permalink, which yt-dlp can
+    /// resolve directly when streaming.
+    private func track(fromJSONLine line: String) -> Track? {
+        guard let json = YtDlp.jsonObject(from: line) else { return nil }
+
+        guard let id = trackId(from: json),
               let title = json["title"] as? String,
               let urlString = json["url"] as? String else {
             return nil
         }
-        
-        let artist = json["uploader"] as? String ?? "Unknown Artist"
-        let duration = json["duration"] as? Double ?? 0
-        
-        var artworkURL: URL?
-        if let thumbnail = json["thumbnail"] as? String {
-            artworkURL = URL(string: thumbnail)
-        }
-        
+
         return Track(
             id: "sc-\(id)",
             title: title,
-            artist: artist,
+            artist: YtDlp.artist(from: json),
             album: "",
-            duration: duration,
-            artworkURL: artworkURL,
+            duration: json["duration"] as? Double ?? 0,
+            artworkURL: YtDlp.artworkURL(from: json),
             streamURL: nil,
             providerType: .soundcloud,
             providerTrackId: urlString
         )
+    }
+
+    /// Fully-extracted entries (playlist import): `webpage_url` is the
+    /// canonical permalink.
+    private func track(fromFullJSON json: [String: Any]) -> Track? {
+        guard let id = trackId(from: json),
+              let title = json["title"] as? String else {
+            return nil
+        }
+
+        guard let permalink = (json["webpage_url"] as? String) ?? (json["url"] as? String) else {
+            return nil
+        }
+
+        return Track(
+            id: "sc-\(id)",
+            title: title,
+            artist: YtDlp.artist(from: json),
+            album: "",
+            duration: json["duration"] as? Double ?? 0,
+            artworkURL: YtDlp.artworkURL(from: json),
+            streamURL: nil,
+            providerType: .soundcloud,
+            providerTrackId: permalink
+        )
+    }
+
+    /// SoundCloud IDs come back as strings or numbers depending on the code path.
+    private func trackId(from json: [String: Any]) -> String? {
+        if let id = json["id"] as? String { return id }
+        if let id = json["id"] as? Int { return String(id) }
+        return nil
     }
 }

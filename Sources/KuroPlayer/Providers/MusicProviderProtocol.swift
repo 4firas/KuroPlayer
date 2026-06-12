@@ -3,7 +3,7 @@ import Foundation
 @MainActor protocol MusicProvider: Sendable {
     var type: MusicProviderType { get }
     var isAuthenticated: Bool { get }
-    
+
     func authenticate() async throws
     func logout() async throws
     func search(query: String) async throws -> [Track]
@@ -16,6 +16,22 @@ import Foundation
     func addTrackToPlaylist(playlist: Playlist, track: Track) async throws
     func removeTrackFromPlaylist(playlist: Playlist, track: Track) async throws
     func deletePlaylist(playlist: Playlist) async throws
+
+    /// Whether this provider can import the playlist at `url`.
+    func canImportPlaylist(url: URL) -> Bool
+    /// Imports a full playlist (metadata + tracks + playlist artwork) from a
+    /// public URL on the provider's service.
+    func importPlaylist(url: URL) async throws -> Playlist
+}
+
+// Default implementations so providers without web playlists (e.g. local
+// files) don't have to stub these.
+extension MusicProvider {
+    func canImportPlaylist(url: URL) -> Bool { false }
+
+    func importPlaylist(url: URL) async throws -> Playlist {
+        throw ProviderError.networkError("\(type.displayName) does not support playlist import")
+    }
 }
 
 enum ProviderError: Error, LocalizedError {
@@ -24,6 +40,7 @@ enum ProviderError: Error, LocalizedError {
     case invalidResponse
     case trackNotFound
     case streamUnavailable
+    case playlistNotFound
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +54,8 @@ enum ProviderError: Error, LocalizedError {
             return "Track not found"
         case .streamUnavailable:
             return "Stream unavailable"
+        case .playlistNotFound:
+            return "Playlist not found or empty"
         }
     }
 }

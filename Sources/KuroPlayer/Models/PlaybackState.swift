@@ -22,6 +22,8 @@ struct PlaybackState: Codable {
     var volume: Float = 0.7
     var isShuffled: Bool = false
     var repeatMode: RepeatMode = .off
+    /// Original queue order, kept while shuffle is on so it can be restored.
+    var unshuffledQueue: [Track]? = nil
 
     var nextTrack: Track? {
         guard !queue.isEmpty else { return nil }

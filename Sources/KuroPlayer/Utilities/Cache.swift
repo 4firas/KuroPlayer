@@ -1,6 +1,8 @@
 import Foundation
 
-@MainActor class Cache {
+/// Disk-backed TTL cache. Thread-safe via an internal queue so providers can
+/// read/write from any isolation context without hopping to the main actor.
+final class Cache: @unchecked Sendable {
     static let shared = Cache()
 
     private let cacheDir: URL
@@ -47,6 +49,12 @@ import Foundation
             } catch {
                 return nil
             }
+        }
+    }
+
+    func removeObject(forKey key: String) {
+        queue.async(flags: .barrier) {
+            try? FileManager.default.removeItem(at: self.cacheDir.appendingPathComponent(self.hash(key)))
         }
     }
 

@@ -2,35 +2,41 @@ import SwiftUI
 
 struct QueueView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
                 Text("Play Queue")
-                    .font(.title2.bold())
-                
+                    .font(.largeTitle.bold())
+
                 Spacer()
-                
+
                 if !viewModel.queue.isEmpty {
                     Text("\(viewModel.queue.count) tracks")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button(action: { viewModel.clearQueue() }) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.glass)
+                    .help("Clear queue")
                 }
             }
-            .padding(20)
-            
+            .padding(24)
+
             // Queue list
             if viewModel.queue.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 48))
                         .foregroundStyle(.secondary)
-                    
+
                     Text("Queue is empty")
                         .font(.headline)
                         .foregroundStyle(.secondary)
-                    
+
                     Text("Add tracks from your library or search")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -42,7 +48,7 @@ struct QueueView: View {
                         QueueRow(
                             track: track,
                             index: index,
-                            isActive: index == viewModel.playbackEngine.state.currentIndex
+                            isActive: index == viewModel.currentQueueIndex
                         )
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
@@ -58,6 +64,7 @@ struct QueueView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .scrollIndicators(.hidden)
             }
         }
         .frame(minWidth: 350, minHeight: 400)
@@ -69,7 +76,9 @@ struct QueueRow: View {
     let track: Track
     let index: Int
     let isActive: Bool
-    
+
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
         HStack(spacing: 12) {
             // Index or playing indicator
@@ -84,22 +93,22 @@ struct QueueRow: View {
                 }
             }
             .frame(width: 20)
-            
+
             // Track info
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
                     .font(.body.weight(isActive ? .semibold : .regular))
-                    .foregroundStyle(isActive ? KurokulaTheme.accent : .primary)
+                    .foregroundStyle(isActive ? theme.accent : .primary)
                     .lineLimit(1)
-                
+
                 Text(track.artist)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            
+
             Spacer()
-            
+
             // Duration
             Text(track.formattedDuration)
                 .font(.caption.monospaced())
@@ -107,6 +116,6 @@ struct QueueRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(.regular.tint(isActive ? KurokulaTheme.accent.opacity(0.2) : .clear), in: .rect(cornerRadius: 8))
+        .glassEffect(.regular.tint(isActive ? theme.accent.opacity(0.2) : .clear), in: .rect(cornerRadius: 8))
     }
 }

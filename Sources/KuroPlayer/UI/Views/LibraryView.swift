@@ -42,10 +42,9 @@ struct LibraryView: View {
                 ScrollView {
                     GlassEffectContainer(spacing: 2) {
                         LazyVStack(spacing: 2) {
-                            ForEach(viewModel.libraryTracks) { track in
+                            ForEach(Array(viewModel.libraryTracks.enumerated()), id: \.element.id) { index, track in
                                 Button(action: {
-                                    viewModel.setQueue(viewModel.libraryTracks)
-                                    viewModel.play(track: track)
+                                    viewModel.playFromList(viewModel.libraryTracks, startingAt: index)
                                 }) {
                                     TrackRowContent(track: track)
                                 }
@@ -55,11 +54,17 @@ struct LibraryView: View {
                                     in: .rect(cornerRadius: 8)
                                 )
                                 .glassEffectID(track.id, in: glassNamespace)
+                                .contextMenu {
+                                    Button("Add to Queue") {
+                                        viewModel.addToQueue(track)
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, 24)
                     }
                 }
+                .scrollIndicators(.hidden)
             }
         }
     }

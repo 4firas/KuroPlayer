@@ -2,29 +2,31 @@ import SwiftUI
 
 struct PlayerBarView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
-    
+    @EnvironmentObject private var theme: ThemeManager
+
     var body: some View {
-        VStack(spacing: 12) {
-            // Progress bar
-            if let track = viewModel.currentTrack {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(.secondary.opacity(0.3))
-                            .frame(height: 4)
-                        
-                        Capsule()
-                            .fill(KurokulaTheme.accent)
-                            .frame(width: geometry.size.width * progress, height: 4)
+        VStack(spacing: 10) {
+            // Scrubbable progress row: elapsed — bar — total
+            if viewModel.currentTrack != nil {
+                HStack(spacing: 10) {
+                    Text(formatTime(displayedTime))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+
+                    KuroSlider(value: progressBinding) {
+                        commitScrub()
                     }
-                    .glassEffect(.regular, in: .capsule)
-                }
-                .frame(height: 4)
-                .onTapGesture { location in
-                    // TODO: Add scrubbing
+                    .disabled(viewModel.isLoadingTrack)
+                    .opacity(viewModel.isLoadingTrack ? 0.5 : 1)
+
+                    Text(formatTime(viewModel.duration))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .leading)
                 }
             }
-            
+
             // Controls
             HStack(spacing: 20) {
                 // Track info
@@ -43,7 +45,7 @@ struct PlayerBarView: View {
                         }
                         .frame(width: 48, height: 48)
                         .clipShape(.rect(cornerRadius: 8))
-                        
+
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)
                                 .font(.headline)
@@ -60,58 +62,68 @@ struct PlayerBarView: View {
                         .foregroundColor(.secondary)
                         .frame(width: 250, alignment: .leading)
                 }
-                
+
                 Spacer()
-                
+
                 // Playback controls
-                HStack(spacing: 16) {
+                HStack(spacing: 14) {
+                    Button(action: { viewModel.toggleShuffle() }) {
+                        Image(systemName: "shuffle")
+                            .font(.body)
+                            .foregroundStyle(viewModel.isShuffled ? theme.accent : .secondary)
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(viewModel.queue.isEmpty)
+                    .help("Shuffle")
+
                     Button(action: { viewModel.previous() }) {
                         Image(systemName: "backward.fill")
                             .font(.title2)
                     }
                     .buttonStyle(.glass)
                     .disabled(viewModel.currentTrack == nil)
-                    
+
                     Button(action: { viewModel.togglePlayPause() }) {
-                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title)
+                        ZStack {
+                            if viewModel.isLoadingTrack {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.title)
+                            }
+                        }
+                        .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.glassProminent)
-                    .disabled(viewModel.currentTrack == nil)
-                    
+                    .disabled(viewModel.currentTrack == nil || viewModel.isLoadingTrack)
+
                     Button(action: { viewModel.next() }) {
                         Image(systemName: "forward.fill")
                             .font(.title2)
                     }
                     .buttonStyle(.glass)
                     .disabled(viewModel.currentTrack == nil)
-                }
-                
-                Spacer()
-                
-                // Volume and time
-                HStack(spacing: 12) {
-                    Image(systemName: "speaker.fill")
-                        .foregroundColor(.secondary)
-                    
-                    Slider(value: $viewModel.sliderVolume, in: 0...1)
-                        .onChange(of: viewModel.sliderVolume) { _, newValue in
-                            viewModel.setVolume(Float(newValue))
-                        }
-                        .frame(width: 100)
-                    
-                    if let track = viewModel.currentTrack {
-                        Text(formatTime(viewModel.currentTime))
-                            .font(.caption.monospaced())
-                            .foregroundColor(.secondary)
-                        
-                        Text("/")
-                            .foregroundColor(.secondary)
-                        
-                        Text(formatTime(track.duration))
-                            .font(.caption.monospaced())
-                            .foregroundColor(.secondary)
+
+                    Button(action: { viewModel.cycleRepeatMode() }) {
+                        Image(systemName: viewModel.repeatMode == .one ? "repeat.1" : "repeat")
+                            .font(.body)
+                            .foregroundStyle(viewModel.repeatMode == .off ? .secondary : theme.accent)
                     }
+                    .buttonStyle(.glass)
+                    .help("Repeat")
+                }
+
+                Spacer()
+
+                // Volume
+                HStack(spacing: 10) {
+                    Image(systemName: volumeIcon)
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+
+                    KuroSlider(value: volumeBinding)
+                        .frame(width: 110)
                 }
                 .frame(width: 250, alignment: .trailing)
             }
@@ -119,13 +131,56 @@ struct PlayerBarView: View {
         .padding(16)
         .glassEffect(.regular, in: .rect(cornerRadius: 12))
     }
-    
-    private var progress: Double {
-        guard let track = viewModel.currentTrack, track.duration > 0 else { return 0 }
-        return viewModel.currentTime / track.duration
+
+    // MARK: - Scrubbing
+
+    /// While dragging, the bar follows the finger via scrubFraction; release
+    /// commits the seek.
+    private var progressBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.scrubFraction ?? progress },
+            set: { viewModel.scrubFraction = $0 }
+        )
     }
-    
+
+    private func commitScrub() {
+        guard let fraction = viewModel.scrubFraction else { return }
+        viewModel.seek(to: fraction * viewModel.duration)
+        viewModel.scrubFraction = nil
+    }
+
+    private var displayedTime: TimeInterval {
+        if let fraction = viewModel.scrubFraction {
+            return fraction * viewModel.duration
+        }
+        return viewModel.currentTime
+    }
+
+    private var progress: Double {
+        guard viewModel.duration > 0 else { return 0 }
+        return (viewModel.currentTime / viewModel.duration).clamped(to: 0...1)
+    }
+
+    // MARK: - Volume
+
+    private var volumeBinding: Binding<Double> {
+        Binding(
+            get: { Double(viewModel.volume) },
+            set: { viewModel.setVolume(Float($0)) }
+        )
+    }
+
+    private var volumeIcon: String {
+        switch viewModel.volume {
+        case 0: return "speaker.slash.fill"
+        case ..<0.33: return "speaker.wave.1.fill"
+        case ..<0.66: return "speaker.wave.2.fill"
+        default: return "speaker.wave.3.fill"
+        }
+    }
+
     private func formatTime(_ time: TimeInterval) -> String {
+        guard time.isFinite, time >= 0 else { return "0:00" }
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)

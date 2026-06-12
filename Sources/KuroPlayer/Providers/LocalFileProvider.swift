@@ -8,6 +8,12 @@ import AVFoundation
     private let fileManager = FileManager.default
     private let supportedExtensions = ["mp3", "m4a", "flac", "wav"]
 
+    /// Scanning the Music folder reads metadata for every file — far too slow
+    /// to repeat per search, so the result is cached briefly.
+    private var cachedLibrary: [Track]?
+    private var cachedAt: Date = .distantPast
+    private let cacheLifetime: TimeInterval = 300
+
     func authenticate() async throws {}
     func logout() async throws {}
 
@@ -52,6 +58,10 @@ import AVFoundation
     }
     
     func getLibrary() async throws -> [Track] {
+        if let cachedLibrary, Date().timeIntervalSince(cachedAt) < cacheLifetime {
+            return cachedLibrary
+        }
+
         guard let musicDir = fileManager.urls(for: .musicDirectory, in: .userDomainMask).first else {
             return []
         }
@@ -67,6 +77,8 @@ import AVFoundation
             }
         }
 
+        cachedLibrary = tracks
+        cachedAt = Date()
         return tracks
     }
 

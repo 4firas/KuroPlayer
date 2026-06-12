@@ -1,5 +1,20 @@
 # KuroPlayer — Development Issues
 
+## 2026-06-12 Update (large refactor, untested — built blind on Linux)
+
+Resolved in this pass: #3 (stream URLs re-fetched + short-TTL cached), #10 (search/stream caching + debounce + next-track prefetch), #13 (scrobble timer ignores seeks/stalls), #14 (spinner on play button while loading).
+
+New since the last update:
+- **Shared yt-dlp runner** (`Utilities/YtDlp.swift`): binary auto-discovery (Homebrew/MacPorts/usr-local/~/.local), consistent flags, hard timeouts, process termination on task cancellation. Both providers now behave identically.
+- **Search debounce** (350 ms) — previously every keystroke spawned two yt-dlp processes.
+- **Playlist import**: paste a SoundCloud set or YouTube/YouTube Music playlist URL in Search or the new Playlists view. SoundCloud uses full extraction (flat entries have no titles — the old breakage) and pulls the set's own cover art. Playlists persist in Application Support (`PlaylistStore`).
+- **Parametric EQ** (`Audio/`): MTAudioProcessingTap + Apple NBandEQ AudioUnit on the AVPlayer item. Bundled oratory1990/AutoEq presets (peqdb.com format); paste any preset from peqdb.com via Settings. Live updates while playing. Note: needs progressive (non-HLS) streams — format selection prefers `protocol^=http`.
+- **Theme system** (`UI/Theme/ThemeManager.swift`): System mode (follows macOS light/dark + system accent) vs Kurokula (default). Secret: 7 clicks on the version number in Settings → About unlock the Kurokula switch after leaving it.
+- **Playback engine fixes**: single AVPlayer + `replaceCurrentItem` (the periodic time observer previously died after the first track), end-of-track via `AVPlayerItemDidPlayToEndTime` instead of duration math, repeat-all index wrap, no more stuck "loading" state, shuffle preserves/restores original order, stale play requests can't clobber newer ones.
+- **UI**: scrollbars hidden (the "vertical slider on the right"), themed `KuroSlider` replaces stock volume slider, scrubbable progress bar with time labels, shuffle/repeat buttons, queue clear button, standardized headers.
+
+⚠️ None of this has been compiled or run — no Swift toolchain on the dev box. Expect a fix-up pass on first `swift build`. Most likely friction points: MTAudioProcessingTap callback signatures (EQAudioTap.swift) and strict-concurrency diagnostics.
+
 ## Project Overview
 
 macOS native music player built with SwiftUI. Unified library across YouTube Music + SoundCloud, Last.fm scrobbling, kurokula dark theme.
