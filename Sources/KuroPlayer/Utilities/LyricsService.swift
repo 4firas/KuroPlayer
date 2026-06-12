@@ -219,12 +219,31 @@ class LyricsService {
             
             if validTracks.isEmpty { return nil }
             
-            // Find one within 15 seconds of target duration
+            // Priority 1: Synced lyrics within 15 seconds of target duration
+            if let bestMatch = validTracks.first(where: { json in
+                let hasSynced = (json["syncedLyrics"] as? String)?.isEmpty == false
+                guard let dur = json["duration"] as? Double else { return false }
+                return hasSynced && abs(dur - targetDuration) <= 15
+            }) {
+                let matchData = try JSONSerialization.data(withJSONObject: bestMatch)
+                return parseLyricsResponse(matchData)
+            }
+            
+            // Priority 2: Any valid lyrics within 15 seconds of target duration
             if let closeMatch = validTracks.first(where: { json in
                 guard let dur = json["duration"] as? Double else { return false }
                 return abs(dur - targetDuration) <= 15
             }) {
                 let matchData = try JSONSerialization.data(withJSONObject: closeMatch)
+                return parseLyricsResponse(matchData)
+            }
+            
+            // Priority 3: Highest ranked result with synced lyrics (ignoring duration)
+            if let bestRankedSynced = validTracks.first(where: { json in
+                let hasSynced = (json["syncedLyrics"] as? String)?.isEmpty == false
+                return hasSynced
+            }) {
+                let matchData = try JSONSerialization.data(withJSONObject: bestRankedSynced)
                 return parseLyricsResponse(matchData)
             }
             

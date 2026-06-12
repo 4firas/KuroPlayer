@@ -39,6 +39,7 @@ struct EqualizerSettingsSection: View {
                     )
                     .frame(maxWidth: 280)
                 }
+                .zIndex(100)
 
                 // Preamp
                 HStack(spacing: 12) {
