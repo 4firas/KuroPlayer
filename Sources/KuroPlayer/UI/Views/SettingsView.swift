@@ -18,6 +18,7 @@ struct SettingsView: View {
                 // Equalizer
                 EqualizerSettingsSection()
                     .padding(.horizontal, 24)
+                    .zIndex(100)
 
                 // Music Services
                 VStack(alignment: .leading, spacing: 16) {

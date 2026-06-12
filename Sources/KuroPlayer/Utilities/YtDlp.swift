@@ -33,6 +33,7 @@ enum YtDlp {
     private static let baseFlags = [
         "--no-config",
         "--no-warnings",
+        "--ignore-errors",
         "--socket-timeout", "15",
         "--retries", "2"
     ]
@@ -113,11 +114,18 @@ enum YtDlp {
                     } else if timedOut.get() {
                         continuation.resume(throwing: RunError.timedOut)
                     } else {
-                        let stderr = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
-                        let summary = stderr
-                            .components(separatedBy: .newlines)
-                            .first { $0.contains("ERROR") } ?? String(stderr.prefix(200))
-                        continuation.resume(throwing: RunError.failed(String(summary.prefix(200))))
+                        let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
+                        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty && (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) {
+                            // yt-dlp often exits with 1 if a single track in a playlist fails, but still outputs valid JSON.
+                            continuation.resume(returning: output)
+                        } else {
+                            let stderr = String(data: errorBuffer.getData(), encoding: .utf8) ?? "unknown error"
+                            let summary = stderr
+                                .components(separatedBy: .newlines)
+                                .first { $0.contains("ERROR") } ?? String(stderr.prefix(200))
+                            continuation.resume(throwing: RunError.failed(String(summary.prefix(200))))
+                        }
                     }
                 }
 

@@ -166,30 +166,29 @@ struct KuroDropdown: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: {
+            HStack {
+                Text(selection)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Color.white.opacity(0.05))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            )
+            .contentShape(.rect)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .onTapGesture {
                 withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
                     state.isExpanded.toggle()
                 }
-            }) {
-                HStack {
-                    Text(selection)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(Color.white.opacity(0.05))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .buttonStyle(.plain)
             .overlay(alignment: .top) {
                 if state.isExpanded {
                     VStack(spacing: 0) {
