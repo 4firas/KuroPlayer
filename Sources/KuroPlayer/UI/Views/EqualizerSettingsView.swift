@@ -33,14 +33,10 @@ struct EqualizerSettingsSection: View {
                     Text("Headphone preset")
                         .font(.body)
                     Spacer()
-                    Picker("", selection: presetBinding) {
-                        ForEach(eq.presetNames, id: \.self) { name in
-                            Text(name).tag(name)
-                        }
-                        Text(EqualizerManager.customPresetName)
-                            .tag(EqualizerManager.customPresetName)
-                    }
-                    .labelsHidden()
+                    KuroDropdown(
+                        selection: presetBinding,
+                        options: eq.presetNames + [EqualizerManager.customPresetName]
+                    )
                     .frame(maxWidth: 280)
                 }
 
@@ -155,5 +151,112 @@ struct EqualizerSettingsSection: View {
         if !eq.importParametricEQText(text) {
             viewModel.errorMessage = "Couldn't read a parametric EQ profile from the clipboard. Copy the preset text from peqdb.com (Preamp + Filter lines) and try again."
         }
+    }
+}
+
+class DropdownState: ObservableObject {
+    @Published var isExpanded = false
+}
+
+struct KuroDropdown: View {
+    @Binding var selection: String
+    let options: [String]
+    @StateObject private var state = DropdownState()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: {
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                    state.isExpanded.toggle()
+                }
+            }) {
+                HStack {
+                    Text(selection)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .top) {
+                if state.isExpanded {
+                    VStack(spacing: 0) {
+                        Spacer().frame(height: 36)
+                        
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(options, id: \.self) { option in
+                                    DropdownItemView(
+                                        option: option,
+                                        selection: $selection,
+                                        isExpanded: $state.isExpanded
+                                    )
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .frame(maxHeight: 200)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
+                                .shadow(color: .black.opacity(0.5), radius: 10, y: 5)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                    }
+                    .zIndex(100)
+                }
+            }
+        }
+    }
+}
+
+class DropdownItemState: ObservableObject {
+    @Published var isHovered = false
+}
+
+struct DropdownItemView: View {
+    let option: String
+    @Binding var selection: String
+    @Binding var isExpanded: Bool
+    @StateObject private var state = DropdownItemState()
+    
+    var body: some View {
+        Button(action: {
+            selection = option
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                isExpanded = false
+            }
+        }) {
+            HStack {
+                Text(option)
+                    .foregroundColor(selection == option ? Theme.accent : .primary)
+                Spacer()
+                if selection == option {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(Theme.accent)
+                        .font(.caption.bold())
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+            .background(state.isHovered ? Color.white.opacity(0.1) : Color.clear)
+            .onHover { state.isHovered = $0 }
+        }
+        .buttonStyle(.plain)
     }
 }

@@ -96,10 +96,11 @@ import Foundation
         let output = try await YtDlp.run(args, timeout: 180)
 
         guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let entries = json["entries"] as? [[String: Any]] else {
+              let rawEntries = json["entries"] as? [Any] else {
             throw ProviderError.playlistNotFound
         }
 
+        let entries = rawEntries.compactMap { $0 as? [String: Any] }
         let tracks = entries.compactMap { track(fromFullJSON: $0) }
         guard !tracks.isEmpty else {
             throw ProviderError.playlistNotFound
