@@ -1,6 +1,6 @@
 # KuroPlayer
 
-A macOS music player — SoundCloud + YouTube Music unified, Last.fm scrobbling, Kurokula dark theme.
+A macOS music player: SoundCloud + YouTube Music unified, Last.fm scrobbling, Kurokula dark theme.
 
 ## Features
 
