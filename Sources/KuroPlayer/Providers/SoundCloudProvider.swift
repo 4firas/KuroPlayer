@@ -95,15 +95,17 @@ import Foundation
         let args = ["-J", url.absoluteString]
         let output = try await YtDlp.run(args, timeout: 180)
 
-        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let rawEntries = json["entries"] as? [Any] else {
-            throw ProviderError.playlistNotFound
+        guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw ProviderError.networkError("Failed to parse JSON. Output prefix: \(String(output.prefix(100)))")
+        }
+        guard let rawEntries = json["entries"] as? [Any] else {
+            throw ProviderError.networkError("JSON had no 'entries'. Keys: \(json.keys.joined(separator: ", "))")
         }
 
         let entries = rawEntries.compactMap { $0 as? [String: Any] }
         let tracks = entries.compactMap { track(fromFullJSON: $0) }
         guard !tracks.isEmpty else {
-            throw ProviderError.playlistNotFound
+            throw ProviderError.networkError("Tracks array is empty. rawEntries count: \(rawEntries.count)")
         }
 
         let name = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "SoundCloud Set"

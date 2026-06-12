@@ -116,7 +116,8 @@ enum YtDlp {
                     } else {
                         let output = String(data: outputBuffer.getData(), encoding: .utf8) ?? ""
                         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty && (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) {
+                        // If it has at least `{` or `[`, assume it contains JSON even if preceded by warnings
+                        if !trimmed.isEmpty && (trimmed.contains("{") || trimmed.contains("[")) {
                             // yt-dlp often exits with 1 if a single track in a playlist fails, but still outputs valid JSON.
                             continuation.resume(returning: output)
                         } else {
@@ -145,7 +146,13 @@ enum YtDlp {
 
     /// Parses one `--dump-json` line into a dictionary.
     static func jsonObject(from line: String) -> [String: Any]? {
-        guard let data = line.data(using: .utf8),
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        var jsonString = trimmed
+        if let startIndex = jsonString.firstIndex(where: { $0 == "{" || $0 == "[" }) {
+            jsonString = String(jsonString[startIndex...])
+        }
+        
+        guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
