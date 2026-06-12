@@ -18,6 +18,7 @@ class PlayerViewModel: ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var searchResults: [Track] = []
     @Published var libraryTracks: [Track] = []
+    @Published var cloudPlaylists: [Playlist] = []
     @Published var playlists: [Playlist] = []
     @Published var isSearching = false
     @Published var errorMessage: String?
@@ -73,6 +74,13 @@ class PlayerViewModel: ObservableObject {
                 self?.currentQueueIndex = state.currentIndex
                 self?.isShuffled = state.isShuffled
                 self?.repeatMode = state.repeatMode
+            }
+            .store(in: &cancellables)
+
+        Publishers.CombineLatest($cloudPlaylists, PlaylistStore.shared.$playlists)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] cloud, local in
+                self?.playlists = local + cloud
             }
             .store(in: &cancellables)
     }
@@ -391,7 +399,7 @@ class PlayerViewModel: ObservableObject {
         }
 
         libraryTracks = allTracks
-        playlists = allPlaylists
+        cloudPlaylists = allPlaylists
     }
 
     func dismissError() {
