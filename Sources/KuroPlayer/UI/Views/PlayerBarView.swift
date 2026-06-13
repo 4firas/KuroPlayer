@@ -143,7 +143,7 @@ struct PlayerBarView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .frame(maxWidth: 180, alignment: .leading)
+        .frame(width: 180, alignment: .leading)
     }
 
     // MARK: Center — transport controls
@@ -159,20 +159,14 @@ struct PlayerBarView: View {
             Button {
                 viewModel.togglePlayPause()
             } label: {
-                ZStack {
-                    if viewModel.isPlaying {
-                        Image(systemName: "pause.fill")
-                            .matchedGeometryEffect(id: "playState", in: playNamespace)
-                    } else {
-                        Image(systemName: "play.fill")
-                            .matchedGeometryEffect(id: "playState", in: playNamespace)
-                    }
-                }
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Theme.accent))
-                .shadow(color: Theme.accent.opacity(0.4), radius: 6, y: 2)
+                Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                    .contentTransition(.symbolEffect(.replace))
+                    .font(.system(size: 16, weight: .bold))
+                    .offset(x: viewModel.isPlaying ? 0 : 1)
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.accent))
+                    .shadow(color: Theme.accent.opacity(0.4), radius: 6, y: 2)
             }
             .buttonStyle(.plain)
             .disabled(viewModel.currentTrack == nil)

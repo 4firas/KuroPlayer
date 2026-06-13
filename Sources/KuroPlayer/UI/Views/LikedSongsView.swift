@@ -35,7 +35,7 @@ struct LikedSongsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 8) {
                         ForEach(Array(viewModel.likedTracks.enumerated()), id: \.element.id) { index, track in
                             Button(action: {
@@ -48,22 +48,7 @@ struct LikedSongsView: View {
                             .buttonStyle(.plain)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
                             .contextMenu {
-                                Button("Play Next") { viewModel.playNext(track) }
-                                Button("Add to Queue") { viewModel.addToQueue(track) }
-                                Divider()
-                                Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
-                                    viewModel.toggleLike(track)
-                                }
-                                if !viewModel.playlists.isEmpty {
-                                    Divider()
-                                    Menu("Add to Playlist") {
-                                        ForEach(viewModel.playlists) { playlist in
-                                            Button(playlist.name) {
-                                                viewModel.addToPlaylist(id: playlist.id, track: track)
-                                            }
-                                        }
-                                    }
-                                }
+                                TrackContextMenu(track: track, playlistId: nil, remainingQueue: Array(viewModel.likedTracks[index...]))
                             }
                         }
                     }

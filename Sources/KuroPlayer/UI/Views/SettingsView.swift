@@ -5,7 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject private var theme: ThemeManager
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 32) {
                 // Header
                 Text("Settings")

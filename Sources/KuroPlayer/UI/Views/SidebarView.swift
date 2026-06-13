@@ -45,6 +45,7 @@ class SidebarViewState: ObservableObject {
 struct SidebarView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
     @StateObject private var state = SidebarViewState()
+    @ObservedObject private var downloadManager = DownloadManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,7 +58,7 @@ struct SidebarView: View {
             navSection
 
             // Playlists
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
                     playlistsSection
                     statusSection
@@ -86,10 +87,13 @@ struct SidebarView: View {
                         viewModel.showNewPlaylist = true
                     }
                 }
-                Button("Import Playlist") {
+                Button("Import Web Playlist") {
                     withAnimation(.easeIn(duration: 0.15)) {
                         viewModel.showImportPlaylist = true
                     }
+                }
+                Button("Import Local Files") {
+                    viewModel.importLocalFiles()
                 }
             } label: {
                 Image(systemName: "plus")
@@ -163,24 +167,48 @@ struct SidebarView: View {
     }
 
     private func playlistIcon(for playlist: Playlist) -> some View {
-        if let url = playlist.tracks.first?.artworkURL {
-            return AnyView(
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        PlaylistThumbnail(symbol: "music.note.list", tint: Theme.accent, size: 26)
-                    }
-                }
-                .frame(width: 26, height: 26)
-                .clipShape(.rect(cornerRadius: 6))
+        let downloadedCount = playlist.tracks.filter { UserDataStore.shared.downloadedTracks[$0.id] != nil }.count
+        
+        let stateIndicator: AnyView
+        if downloadedCount > 0 && downloadedCount == playlist.tracks.count {
+            stateIndicator = AnyView(
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.success)
+                    .background(Circle().fill(Color.black.opacity(0.8)))
+            )
+        } else if downloadedCount > 0 {
+            stateIndicator = AnyView(
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.secondary)
+                    .background(Circle().fill(Color.black.opacity(0.8)))
             )
         } else {
-            return AnyView(
-                PlaylistThumbnail(symbol: "music.note.list", tint: Theme.accent, size: 26)
-            )
+            stateIndicator = AnyView(EmptyView())
         }
+
+        return AnyView(
+            ZStack(alignment: .bottomTrailing) {
+                if let url = playlist.tracks.first?.artworkURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        default:
+                            PlaylistThumbnail(symbol: "music.note.list", tint: Theme.accent, size: 26)
+                        }
+                    }
+                    .frame(width: 26, height: 26)
+                    .clipShape(.rect(cornerRadius: 6))
+                } else {
+                    PlaylistThumbnail(symbol: "music.note.list", tint: Theme.accent, size: 26)
+                }
+                
+                stateIndicator
+                    .offset(x: 4, y: 4)
+            }
+        )
     }
 
     private var settingsRow: some View {
@@ -222,6 +250,9 @@ struct SidebarView: View {
             if let errorMessage = viewModel.errorMessage {
                 ErrorPill(message: errorMessage)
             }
+            if downloadManager.isDownloading, let status = downloadManager.currentStatus {
+                DownloadPill(message: status, progress: downloadManager.currentProgress)
+            }
             settingsRow
             userRow
         }
@@ -252,7 +283,7 @@ struct SidebarView: View {
         case .view(let v):
             viewModel.selectedView = v
         case .playlist:
-            viewModel.selectedView = .home
+            viewModel.selectedView = .playlistDetail
         case .none:
             break
         }
@@ -430,6 +461,57 @@ struct ErrorPill: View {
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Theme.error.opacity(0.35), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Download Pill
+
+struct DownloadPill: View {
+    let message: String
+    let progress: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if progress == nil || progress == 1.0 {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.6)
+                } else {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                Text(message)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            if let progress = progress, progress < 1.0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.1))
+                            .frame(height: 3)
+                        Capsule().fill(Theme.accent)
+                            .frame(width: geo.size.width * CGFloat(progress), height: 3)
+                    }
+                }
+                .frame(height: 3)
+                .padding(.horizontal, 2)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Theme.accent.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Theme.accent.opacity(0.3), lineWidth: 0.5)
         )
     }
 }

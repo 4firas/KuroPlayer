@@ -177,6 +177,53 @@ struct ContentView: View {
         .environmentObject(viewModel)
         .animation(.smooth(duration: 0.3), value: viewModel.errorMessage)
         .background(WindowAccessor())
+        .onAppear {
+            setupKeyboardMonitors()
+        }
+    }
+    
+    private func setupKeyboardMonitors() {
+        // Space bar for Play/Pause
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Spacebar is keyCode 49
+            if event.keyCode == 49 {
+                // Ensure we aren't typing in a text field
+                if let responder = NSApp.keyWindow?.firstResponder {
+                    if responder.isKind(of: NSTextView.self) || responder.isKind(of: NSTextField.self) {
+                        return event
+                    }
+                }
+                Task { try? await viewModel.togglePlayPause() }
+                return nil // consume event
+            }
+            return event
+        }
+        
+        // System media keys when app is in focus (if MPRemoteCommandCenter isn't active)
+        NSEvent.addLocalMonitorForEvents(matching: .systemDefined) { event in
+            if event.subtype.rawValue == 8 { // Media key event
+                let keyCode = (event.data1 & 0xFFFF0000) >> 16
+                let keyFlags = event.data1 & 0x0000FFFF
+                let isPressed = (((keyFlags & 0xFF00) >> 8) == 0xA)
+                
+                if isPressed {
+                    switch keyCode {
+                    case 16: // Play/Pause
+                        Task { try? await viewModel.togglePlayPause() }
+                        return nil
+                    case 17: // Next
+                        Task { try? await viewModel.next() }
+                        return nil
+                    case 18: // Previous
+                        Task { try? await viewModel.previous() }
+                        return nil
+                    default:
+                        break
+                    }
+                }
+            }
+            return event
+        }
     }
 }
 
@@ -257,7 +304,7 @@ struct HomeView: View {
     @Namespace private var nowPlayingNamespace
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 28) {
                 // Header
                 Text(viewModel.playlists.isEmpty ? "Welcome back" : "My Playlists")

@@ -39,7 +39,7 @@ struct LibraryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 2) {
                         ForEach(Array(viewModel.libraryTracks.enumerated()), id: \.element.id) { index, track in
                             Button(action: {
@@ -53,7 +53,7 @@ struct LibraryView: View {
                             .buttonStyle(.plain)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
                             .contextMenu {
-                                trackContextMenu(track: track, index: index)
+                                TrackContextMenu(track: track, playlistId: nil, remainingQueue: Array(viewModel.libraryTracks[index...]))
                             }
                         }
                     }
@@ -82,6 +82,7 @@ struct LibraryView: View {
 struct TrackRowContent: View {
     let track: Track
     @EnvironmentObject var viewModel: PlayerViewModel
+    @ObservedObject var store = UserDataStore.shared
 
     private var isActive: Bool {
         viewModel.currentTrack?.id == track.id
@@ -133,6 +134,13 @@ struct TrackRowContent: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.accent)
             }
+            
+            // Download indicator
+            if store.downloadedTracks[track.id] != nil {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.success)
+            }
 
             // Provider badge
             Text(track.providerType.displayName)
@@ -153,29 +161,4 @@ struct TrackRowContent: View {
     }
 }
 
-extension LibraryView {
-    @ViewBuilder
-    private func trackContextMenu(track: Track, index: Int) -> some View {
-        Button("Play") {
-            let remaining = Array(viewModel.libraryTracks[index...])
-            viewModel.setQueue(remaining)
-            viewModel.play(track: track)
-        }
-        Button("Play Next") { viewModel.playNext(track) }
-        Button("Add to Queue") { viewModel.addToQueue(track) }
-        Divider()
-        Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
-            viewModel.toggleLike(track)
-        }
-        if !viewModel.playlists.isEmpty {
-            Divider()
-            Menu("Add to Playlist") {
-                ForEach(viewModel.playlists) { playlist in
-                    Button(playlist.name) {
-                        viewModel.addToPlaylist(id: playlist.id, track: track)
-                    }
-                }
-            }
-        }
-    }
-}
+

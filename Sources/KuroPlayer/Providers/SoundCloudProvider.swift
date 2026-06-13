@@ -87,13 +87,12 @@ import Foundation
     }
 
     func importPlaylist(url: URL) async throws -> Playlist {
-        // Full (non-flat) extraction on purpose: SoundCloud's flat playlist
+        // Full (non-flat) extraction is required: SoundCloud's flat playlist
         // entries are bare API references without titles, durations or
-        // artwork — which is why imported sets used to display wrong.
-        // One yt-dlp process resolves the whole set, including the
-        // playlist-level artwork.
-        let args = ["-J", url.absoluteString]
-        let output = try await YtDlp.run(args, timeout: 180)
+        // artwork. We use --sleep-requests to prevent HTTP 403 rate limits
+        // when extracting large sets.
+        let args = ["-J", "--sleep-requests", "1", url.absoluteString]
+        let output = try await YtDlp.run(args, timeout: 300)
 
         guard let json = YtDlp.jsonObject(from: output.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw ProviderError.networkError("Failed to parse JSON. Output prefix: \(String(output.prefix(100)))")

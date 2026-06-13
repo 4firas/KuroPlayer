@@ -29,6 +29,24 @@ class LyricsService {
         case none
     }
 
+    func fetchLyrics(for track: Track) async -> LyricsResult {
+        // Check local storage first
+        if let localPath = UserDataStore.shared.downloadedTracks[track.id] {
+            let lrcURL = URL(fileURLWithPath: localPath).deletingPathExtension().appendingPathExtension("lrc")
+            if let text = try? String(contentsOf: lrcURL, encoding: .utf8) {
+                let lines = parseLRC(text)
+                if !lines.isEmpty { return .synced(lines) }
+            }
+            
+            let txtURL = URL(fileURLWithPath: localPath).deletingPathExtension().appendingPathExtension("txt")
+            if let text = try? String(contentsOf: txtURL, encoding: .utf8) {
+                return .plain(text)
+            }
+        }
+        
+        return await fetchLyrics(title: track.title, artist: track.artist, duration: track.duration)
+    }
+
     func fetchLyrics(title: String, artist: String, duration: TimeInterval) async -> LyricsResult {
         let cacheKey = "\(title.lowercased())|\(artist.lowercased())"
         if let cached = cache[cacheKey] { return cached }

@@ -83,15 +83,27 @@ struct LyricsView: View {
     }
 
     private func plainLyricsContent(_ text: String) -> some View {
-        ScrollView {
-            Text(text)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.8))
-                .lineSpacing(8)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 100)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Static Lyrics")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.1))
+                    .clipShape(.capsule)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 10)
+
+                Text(text)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .lineSpacing(8)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 20)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 100)
         }
         .scrollIndicators(.hidden)
         .mask(
@@ -132,7 +144,7 @@ struct SyncedLyricsContent: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 6) {
                     // Top spacer to center first lines
                     Color.clear.frame(height: 80)
@@ -151,7 +163,8 @@ struct SyncedLyricsContent: View {
                                 .scaleEffect(distance == 0 ? 1.02 : 1.0, anchor: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 32)
-                                .padding(.vertical, 4)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.001))
                                 .contentShape(.rect)
                         }
                         .buttonStyle(.plain)

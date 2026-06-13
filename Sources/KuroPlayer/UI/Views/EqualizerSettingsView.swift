@@ -194,7 +194,7 @@ struct KuroDropdown: View {
                     VStack(spacing: 0) {
                         Spacer().frame(height: 36)
                         
-                        ScrollView {
+                        ScrollView(showsIndicators: false) {
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(options, id: \.self) { option in
                                     DropdownItemView(

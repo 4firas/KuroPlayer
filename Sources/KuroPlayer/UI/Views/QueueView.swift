@@ -138,6 +138,20 @@ extension QueueView {
         Button("Play") { viewModel.playQueue(at: index) }
         Button("Remove from Queue") { viewModel.removeFromQueue(at: index) }
         Divider()
+        if UserDataStore.shared.downloadedTracks[track.id] == nil {
+            Button {
+                viewModel.downloadTrack(track)
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+        } else {
+            Button(role: .destructive) {
+                viewModel.deleteDownloadedTrack(track)
+            } label: {
+                Label("Remove Download", systemImage: "trash")
+            }
+        }
+        Divider()
         Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
             viewModel.toggleLike(track)
         }

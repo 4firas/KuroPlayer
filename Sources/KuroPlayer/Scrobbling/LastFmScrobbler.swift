@@ -12,9 +12,11 @@ import CryptoKit
     }
     private let apiBaseURL = "https://ws.audioscrobbler.com/2.0/"
     
+    private var offlineScrobbles: [(Track, Int)] = []
+    
     private init() {}
     
-    func scrobble(track: Track) async {
+    func scrobble(track: Track, timestamp: Int) async {
         guard let sessionKey = LastFmAuth.shared.sessionKey else { return }
         
         var params: [String: String] = [
@@ -23,7 +25,7 @@ import CryptoKit
             "sk": sessionKey,
             "artist": track.artist,
             "track": track.title,
-            "timestamp": String(Int(Date().timeIntervalSince1970))
+            "timestamp": String(timestamp)
         ]
         
         if !track.album.isEmpty {
@@ -47,9 +49,22 @@ import CryptoKit
             
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
                 print("Scrobbled: \(track.title) by \(track.artist)")
+                await retryOfflineScrobbles()
+            } else {
+                offlineScrobbles.append((track, timestamp))
             }
         } catch {
-            print("Scrobble error: \(error)")
+            print("Scrobble error: \(error), caching for later.")
+            offlineScrobbles.append((track, timestamp))
+        }
+    }
+    
+    private func retryOfflineScrobbles() async {
+        guard !offlineScrobbles.isEmpty else { return }
+        let queue = offlineScrobbles
+        offlineScrobbles.removeAll()
+        for (track, timestamp) in queue {
+            await scrobble(track: track, timestamp: timestamp)
         }
     }
     

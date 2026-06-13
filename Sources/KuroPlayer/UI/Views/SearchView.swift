@@ -88,7 +88,7 @@ struct SearchView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 Color.clear.frame(height: 70)
 
                 LazyVStack(spacing: 1) {
@@ -102,23 +102,7 @@ struct SearchView: View {
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
                         .contentShape(.rect(cornerRadius: 8))
                         .contextMenu {
-                            Button("Play") { viewModel.play(track: track) }
-                            Button("Play Next") { viewModel.playNext(track) }
-                            Button("Add to Queue") { viewModel.addToQueue(track) }
-                            Divider()
-                            Button(viewModel.isLiked(track) ? "Unlike" : "Like") {
-                                viewModel.toggleLike(track)
-                            }
-                            if !viewModel.playlists.isEmpty {
-                                Divider()
-                                Menu("Add to Playlist") {
-                                    ForEach(viewModel.playlists) { playlist in
-                                        Button(playlist.name) {
-                                            viewModel.addToPlaylist(id: playlist.id, track: track)
-                                        }
-                                    }
-                                }
-                            }
+                            TrackContextMenu(track: track, playlistId: nil, remainingQueue: [track])
                         }
                     }
                 }

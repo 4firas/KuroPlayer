@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlaylistDetailView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
+    @ObservedObject var store = UserDataStore.shared
 
     var playlist: Playlist? {
         guard let id = viewModel.selectedPlaylistId else { return nil }
@@ -10,7 +11,7 @@ struct PlaylistDetailView: View {
 
     var body: some View {
         if let playlist = playlist {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header
                     HStack(spacing: 24) {
@@ -52,9 +53,18 @@ struct PlaylistDetailView: View {
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
 
-                            Text("\(playlist.trackCount) songs • \(formatDuration(playlist.totalDuration))")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
+                            HStack {
+                                Text("\(playlist.trackCount) songs • \(formatDuration(playlist.totalDuration))")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                
+                                let state = playlistDownloadState(for: playlist)
+                                if !state.text.isEmpty {
+                                    Text("• \(state.text)")
+                                        .font(.title3.bold())
+                                        .foregroundStyle(state.color)
+                                }
+                            }
                             
                             HStack(spacing: 12) {
                                 Button(action: {
@@ -70,6 +80,16 @@ struct PlaylistDetailView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(playlist.tracks.isEmpty)
+                                
+                                Button(action: {
+                                    viewModel.downloadPlaylist(playlist)
+                                }) {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                        .font(.system(size: 24))
+                                        .foregroundStyle(Theme.accent, .primary.opacity(0.1))
+                                }
+                                .buttonStyle(.plain)
+                                .help("Download Playlist")
                             }
                             .padding(.top, 8)
                         }
@@ -91,7 +111,7 @@ struct PlaylistDetailView: View {
                             .buttonStyle(.plain)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
                             .contextMenu {
-                                trackContextMenu(playlist: playlist, track: track, index: index)
+                                TrackContextMenu(track: track, playlistId: playlist.id, remainingQueue: Array(playlist.tracks[index...]))
                             }
                         }
                     }
@@ -113,13 +133,14 @@ struct PlaylistDetailView: View {
         formatter.unitsStyle = .abbreviated
         return formatter.string(from: duration) ?? ""
     }
-}
-
-extension PlaylistDetailView {
-    @ViewBuilder
-    private func trackContextMenu(playlist: Playlist, track: Track, index: Int) -> some View {
-        Button("Remove from Playlist", role: .destructive) {
-            viewModel.removeFromPlaylist(id: playlist.id, trackId: track.id)
-        }
+    
+    private func playlistDownloadState(for playlist: Playlist) -> (text: String, color: Color) {
+        guard !playlist.tracks.isEmpty else { return ("", .clear) }
+        let downloadedCount = playlist.tracks.filter { store.downloadedTracks[$0.id] != nil }.count
+        if downloadedCount == 0 { return ("", .clear) }
+        if downloadedCount == playlist.tracks.count { return ("Downloaded", Theme.success) }
+        return ("Partially Downloaded (\(downloadedCount)/\(playlist.tracks.count))", Theme.secondary)
     }
 }
+
+

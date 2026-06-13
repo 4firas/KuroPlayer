@@ -61,9 +61,13 @@ struct PlaylistCard: View {
                 AsyncImage(url: artworkURL) { phase in
                     switch phase {
                     case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                        Color.clear
+                            .overlay(
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            )
+                            .clipped()
                     default:
                         fallbackArtwork
                     }

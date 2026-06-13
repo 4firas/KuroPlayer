@@ -105,13 +105,18 @@ class PlaybackEngine: PlaybackEngineProtocol {
     // MARK: - Playback
 
     private func prepareTrack(track: Track) async throws {
-        guard let provider = ProviderRegistry.shared.provider(for: track.providerType) else {
-            throw ProviderError.streamUnavailable
+        let streamURL: URL
+        if track.providerType == .local {
+            guard let localURL = track.streamURL else { throw ProviderError.streamUnavailable }
+            streamURL = localURL
+        } else if let localPath = UserDataStore.shared.downloadedTracks[track.id], FileManager.default.fileExists(atPath: localPath) {
+            streamURL = URL(fileURLWithPath: localPath)
+        } else {
+            guard let provider = ProviderRegistry.shared.provider(for: track.providerType) else {
+                throw ProviderError.streamUnavailable
+            }
+            streamURL = try await provider.getStreamURL(for: track)
         }
-
-        // Stream URLs are resolved fresh (with a short-lived cache at the
-        // provider layer) so expired links never reach the player.
-        let streamURL = try await provider.getStreamURL(for: track)
 
         let asset = AVURLAsset(url: streamURL)
         let playerItem = AVPlayerItem(asset: asset)
@@ -418,6 +423,7 @@ class ScrobbleTracker {
     private var currentTrack: Track?
     private var actualListenTime: TimeInterval = 0
     private var lastUpdateTime: TimeInterval = 0
+    private var playStartTime: Int = 0
     private var hasScrobbled = false
     private var scrobbleThreshold: TimeInterval = 0
     private var isTracking = false
@@ -426,10 +432,16 @@ class ScrobbleTracker {
         currentTrack = track
         actualListenTime = 0
         lastUpdateTime = 0
+        playStartTime = Int(Date().timeIntervalSince1970)
         hasScrobbled = false
         isTracking = true
         // Last.fm: scrobble at 50% or 4 minutes, whichever comes first
         scrobbleThreshold = min(track.duration * 0.5, 240)
+        
+        // Immediately notify "Now Playing" when tracking starts
+        Task {
+            await LastFmScrobbler.shared.updateNowPlaying(track: track)
+        }
     }
 
     func pause() {
@@ -458,15 +470,11 @@ class ScrobbleTracker {
         actualListenTime += delta
 
         if actualListenTime >= scrobbleThreshold {
+            let timestamp = playStartTime
             Task {
-                await LastFmScrobbler.shared.scrobble(track: track)
+                await LastFmScrobbler.shared.scrobble(track: track, timestamp: timestamp)
             }
             hasScrobbled = true
-        } else if actualListenTime >= 30 && actualListenTime - delta < 30 {
-            // Send "now playing" once after 30 seconds of actual listening
-            Task {
-                await LastFmScrobbler.shared.updateNowPlaying(track: track)
-            }
         }
     }
 }

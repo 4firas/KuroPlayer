@@ -9,6 +9,7 @@ class UserDataStore: ObservableObject {
     @Published private(set) var likedTrackIds: Set<String> = []
     @Published private(set) var likedTracks: [Track] = []
     @Published private(set) var userPlaylists: [Playlist] = []
+    @Published private(set) var downloadedTracks: [String: String] = [:]
 
     private let fileURL: URL
 
@@ -18,6 +19,16 @@ class UserDataStore: ObservableObject {
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
         fileURL = appDir.appendingPathComponent("user_data.json")
         load()
+    }
+
+    func addDownloadedTrack(id: String, path: String) {
+        downloadedTracks[id] = path
+        save()
+    }
+
+    func removeDownloadedTrack(id: String) {
+        downloadedTracks.removeValue(forKey: id)
+        save()
     }
 
     // MARK: - Likes
@@ -37,53 +48,20 @@ class UserDataStore: ObservableObject {
         save()
     }
 
-    // MARK: - Playlists
-
-    func createPlaylist(name: String) -> Playlist {
-        let playlist = Playlist(name: name)
-        userPlaylists.append(playlist)
-        save()
-        return playlist
-    }
-
-    func deletePlaylist(id: String) {
-        userPlaylists.removeAll { $0.id == id }
-        save()
-    }
-
-    func renamePlaylist(id: String, name: String) {
-        guard let index = userPlaylists.firstIndex(where: { $0.id == id }) else { return }
-        userPlaylists[index].name = name
-        save()
-    }
-
-    func addToPlaylist(id: String, track: Track) {
-        guard let index = userPlaylists.firstIndex(where: { $0.id == id }) else { return }
-        guard !userPlaylists[index].tracks.contains(where: { $0.id == track.id }) else { return }
-        userPlaylists[index].tracks.append(track)
-        save()
-    }
-
-    func removeFromPlaylist(id: String, trackId: String) {
-        guard let index = userPlaylists.firstIndex(where: { $0.id == id }) else { return }
-        userPlaylists[index].tracks.removeAll { $0.id == trackId }
-        save()
-    }
-
-    func addImportedPlaylist(_ playlist: Playlist) {
-        userPlaylists.append(playlist)
-        save()
-    }
-
     // MARK: - Persistence
 
     private struct StoredData: Codable {
         var likedTracks: [Track]
-        var userPlaylists: [Playlist]
+        var userPlaylists: [Playlist]?
+        var downloadedTracks: [String: String]?
     }
 
     private func save() {
-        let data = StoredData(likedTracks: likedTracks, userPlaylists: userPlaylists)
+        let data = StoredData(
+            likedTracks: likedTracks,
+            userPlaylists: userPlaylists,
+            downloadedTracks: downloadedTracks
+        )
         do {
             let encoded = try JSONEncoder().encode(data)
             try encoded.write(to: fileURL, options: .atomic)
@@ -99,7 +77,8 @@ class UserDataStore: ObservableObject {
             let stored = try JSONDecoder().decode(StoredData.self, from: data)
             likedTracks = stored.likedTracks
             likedTrackIds = Set(stored.likedTracks.map(\.id))
-            userPlaylists = stored.userPlaylists
+            userPlaylists = stored.userPlaylists ?? []
+            downloadedTracks = stored.downloadedTracks ?? [:]
         } catch {
             print("UserDataStore load error: \(error)")
         }

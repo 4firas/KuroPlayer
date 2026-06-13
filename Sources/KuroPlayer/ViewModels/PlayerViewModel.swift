@@ -55,6 +55,10 @@ class PlayerViewModel: ObservableObject {
     init(playbackEngine: PlaybackEngine) {
         self.playbackEngine = playbackEngine
         setupBindings()
+        
+        UserDataStore.shared.$likedTracks
+            .receive(on: RunLoop.main)
+            .assign(to: &$likedTracks)
     }
 
     private func setupBindings() {
@@ -68,6 +72,9 @@ class PlayerViewModel: ObservableObject {
                 self?.isPlaying = state.status == .playing
                 self?.isLoadingTrack = state.status == .loading
                 self?.currentTime = state.currentTime
+                if let track = state.currentTrack {
+                    self?.isLiked = UserDataStore.shared.isLiked(track)
+                }
                 self?.duration = state.currentTrack?.duration ?? 0
                 self?.volume = state.volume
                 self?.queue = state.queue
@@ -104,11 +111,7 @@ class PlayerViewModel: ObservableObject {
         plainLyrics = nil
         
         lyricsTask = Task { [weak self] in
-            let result = await LyricsService.shared.fetchLyrics(
-                title: track.title,
-                artist: track.artist,
-                duration: track.duration
-            )
+            let result = await LyricsService.shared.fetchLyrics(for: track)
             
             guard !Task.isCancelled else { return }
             
@@ -321,6 +324,21 @@ class PlayerViewModel: ObservableObject {
         }
     }
 
+    func importLocalFiles() {
+        Task {
+            isImportingPlaylist = true
+            errorMessage = nil
+            
+            if let playlist = await LocalMusicManager.shared.importLocalFiles() {
+                PlaylistStore.shared.upsert(playlist)
+                selectedPlaylistId = playlist.id
+                selectedView = .playlistDetail
+            }
+            
+            isImportingPlaylist = false
+        }
+    }
+
     func refreshPlaylist(_ playlist: Playlist) {
         guard let source = playlist.sourceURL else { return }
         importPlaylist(from: source.absoluteString)
@@ -353,15 +371,37 @@ class PlayerViewModel: ObservableObject {
     }
 
     func isLiked(_ track: Track) -> Bool {
-        return likedTracks.contains(where: { $0.id == track.id })
+        return UserDataStore.shared.isLiked(track)
     }
 
     func toggleLike(_ track: Track) {
-        if isLiked(track) {
-            likedTracks.removeAll(where: { $0.id == track.id })
-        } else {
-            likedTracks.append(track)
+        UserDataStore.shared.toggleLike(track)
+        
+        // Ensure UI updates if the current track changes
+        if currentTrack?.id == track.id {
+            isLiked = isLiked(track)
         }
+    }
+
+    // MARK: - Downloads
+    
+    func deleteDownloadedTrack(_ track: Track) {
+        if let path = UserDataStore.shared.downloadedTracks[track.id] {
+            try? FileManager.default.removeItem(atPath: path)
+            let lrcURL = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("lrc")
+            let txtURL = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("txt")
+            try? FileManager.default.removeItem(atPath: lrcURL.path)
+            try? FileManager.default.removeItem(atPath: txtURL.path)
+            UserDataStore.shared.removeDownloadedTrack(id: track.id)
+        }
+    }
+
+    func downloadTrack(_ track: Track) {
+        DownloadManager.shared.downloadTrack(track)
+    }
+
+    func downloadPlaylist(_ playlist: Playlist) {
+        DownloadManager.shared.downloadPlaylist(playlist)
     }
 
     func playNext(_ track: Track) {
