@@ -21,16 +21,28 @@ extension View {
 
 #if os(macOS)
 struct ScrollViewHider: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let scrollView = view.enclosingScrollView {
+    class HiderView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            hideScrollers()
+        }
+        
+        override func layout() {
+            super.layout()
+            hideScrollers()
+        }
+        
+        private func hideScrollers() {
+            if let scrollView = self.enclosingScrollView {
                 scrollView.hasVerticalScroller = false
                 scrollView.hasHorizontalScroller = false
                 scrollView.scrollerStyle = .overlay
             }
         }
-        return view
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        return HiderView()
     }
     
     func updateNSView(_ nsView: NSView, context: Context) {}
