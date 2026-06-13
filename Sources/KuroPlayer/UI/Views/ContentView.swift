@@ -305,6 +305,7 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
             VStack(alignment: .leading, spacing: 28) {
                 // Header
                 Text(viewModel.playlists.isEmpty ? "Welcome back" : "My Playlists")

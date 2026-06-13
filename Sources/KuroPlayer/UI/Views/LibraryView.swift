@@ -40,6 +40,7 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
                     LazyVStack(spacing: 2) {
                         ForEach(Array(viewModel.libraryTracks.enumerated()), id: \.element.id) { index, track in
                             Button(action: {

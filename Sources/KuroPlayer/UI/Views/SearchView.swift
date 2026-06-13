@@ -89,6 +89,7 @@ struct SearchView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
                 Color.clear.frame(height: 70)
 
                 LazyVStack(spacing: 1) {

@@ -12,6 +12,7 @@ struct PlaylistDetailView: View {
     var body: some View {
         if let playlist = playlist {
             ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
                 VStack(alignment: .leading, spacing: 20) {
                     // Header
                     HStack(spacing: 24) {

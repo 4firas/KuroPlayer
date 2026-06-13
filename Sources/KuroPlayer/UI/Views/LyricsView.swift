@@ -84,6 +84,7 @@ struct LyricsView: View {
 
     private func plainLyricsContent(_ text: String) -> some View {
         ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
             VStack(alignment: .leading, spacing: 16) {
                 Text("Static Lyrics")
                     .font(.caption.bold())
@@ -145,6 +146,7 @@ struct SyncedLyricsContent: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
                 LazyVStack(spacing: 6) {
                     // Top spacer to center first lines
                     Color.clear.frame(height: 80)

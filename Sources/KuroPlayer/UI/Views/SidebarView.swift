@@ -59,6 +59,7 @@ struct SidebarView: View {
 
             // Playlists
             ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
                 VStack(alignment: .leading, spacing: 4) {
                     playlistsSection
                     statusSection

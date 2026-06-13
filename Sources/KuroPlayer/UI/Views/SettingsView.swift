@@ -6,6 +6,7 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
+                Color.clear.frame(width: 0, height: 0).hideNativeScrollbars()
             VStack(alignment: .leading, spacing: 32) {
                 // Header
                 Text("Settings")
