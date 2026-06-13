@@ -1,4 +1,15 @@
 import SwiftUI
+import AppKit
+
+extension NSScrollView {
+    open override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        self.hasVerticalScroller = false
+        self.hasHorizontalScroller = false
+        self.scrollerStyle = .overlay
+    }
+}
+import SwiftUI
 
 @main
 struct KuroPlayerApp: App {
